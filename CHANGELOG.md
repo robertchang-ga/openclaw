@@ -5,6 +5,7 @@
 ## Unreleased
 
 ### Fixes
+- Model: retry fallback on rate-limit/quota errors and unsupported thinking levels. (#223) — thanks @augard
 - Onboarding: resolve CLI entrypoint when running via `npx` so gateway daemon install works without a build step.
 - TUI: migrate key handling to the updated pi-tui Key matcher API.
 - macOS: prefer gateway config reads/writes in local mode (fall back to disk if the gateway is unavailable).
