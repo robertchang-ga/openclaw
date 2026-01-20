@@ -18,6 +18,7 @@ Docs: https://docs.clawd.bot
 - Auth: dedupe codex-cli profiles when tokens match custom openai-codex entries. (#1264) — thanks @odrobnik.
 - Agents: avoid misclassifying context-window-too-small errors as context overflow. (#1266) — thanks @humanwritten.
 - Slack: resolve Bolt default-export shapes for monitor startup. (#1208) — thanks @24601.
+- UI: allow editing session labels in the Sessions table. (#1294) — thanks @bradleypriest.
 
 ## 2026.1.19-3
 

@@ -203,6 +203,8 @@ function renderRow(
           placeholder="(optional)"
           @change=${(e: Event) => {
             const value = (e.target as HTMLInputElement).value.trim();
+            const current = (row.label ?? "").trim();
+            if (value === current) return;
             onPatch(row.key, { label: value || null });
           }}
         />
