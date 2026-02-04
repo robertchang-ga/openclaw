@@ -169,16 +169,17 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
       await fs.promises.mkdir(conversationsDir, { recursive: true });
       binds.push(`${conversationsDir}:/home/node/.openclaw/agents/${agentId}/agent/conversations:rw`);
       
-      // Sessions directory for secure mode - use a separate directory to avoid
-      // sessions.json with host paths. Container creates fresh sessions.
-      const sessionsSecureDir = path.join(agentAgentDir, "sessions-secure");
-      await fs.promises.mkdir(sessionsSecureDir, { recursive: true });
-      binds.push(`${sessionsSecureDir}:/home/node/.openclaw/agents/${agentId}/agent/sessions:rw`);
-      
       // REAL memory directory (read-write, no secrets here)  
       const memoryDir = path.join(agentAgentDir, "memory");
       await fs.promises.mkdir(memoryDir, { recursive: true });
       binds.push(`${memoryDir}:/home/node/.openclaw/agents/${agentId}/agent/memory:rw`);
+      
+      // Sessions directory - note: this is at /agents/{id}/sessions, NOT /agents/{id}/agent/sessions
+      // Use a separate sessions-secure directory to avoid sessions.json with host paths
+      const agentDir = path.join(agentsDir, agentId);
+      const sessionsSecureDir = path.join(agentDir, "sessions-secure");
+      await fs.promises.mkdir(sessionsSecureDir, { recursive: true });
+      binds.push(`${sessionsSecureDir}:/home/node/.openclaw/agents/${agentId}/sessions:rw`);
     }
   }
   
