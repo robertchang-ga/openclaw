@@ -69,8 +69,8 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
         "utf8"
       );
       
-      // Mount to expected container path
-      binds.push(`${sanitizedConfigPath}:/root/.openclaw/openclaw${ext}:ro`);
+      // Mount to expected container path (container runs as 'node' user)
+      binds.push(`${sanitizedConfigPath}:/home/node/.openclaw/openclaw${ext}:ro`);
     } finally {
       if (originalSecureMode === undefined) {
         delete process.env.OPENCLAW_SECURE_MODE;
@@ -135,7 +135,7 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
           await fs.promises.writeFile(sanitizedAuthPath, JSON.stringify(sanitizedAuth, null, 2), "utf8");
           
           // Mount sanitized auth file (read-only)
-          binds.push(`${sanitizedAuthPath}:/root/.openclaw/agents/${agentId}/agent/auth-profiles.json:ro`);
+          binds.push(`${sanitizedAuthPath}:/home/node/.openclaw/agents/${agentId}/agent/auth-profiles.json:ro`);
         } catch (err) {
           console.warn(`Skipping auth profiles for agent ${agentId}: ${err}`);
         }
@@ -144,17 +144,17 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
       // REAL conversations directory (read-write, no secrets here)
       const conversationsDir = path.join(agentAgentDir, "conversations");
       await fs.promises.mkdir(conversationsDir, { recursive: true });
-      binds.push(`${conversationsDir}:/root/.openclaw/agents/${agentId}/agent/conversations:rw`);
+      binds.push(`${conversationsDir}:/home/node/.openclaw/agents/${agentId}/agent/conversations:rw`);
       
       // REAL sessions directory (read-write, no secrets here)
       const sessionsDir = path.join(agentAgentDir, "sessions");
       await fs.promises.mkdir(sessionsDir, { recursive: true });
-      binds.push(`${sessionsDir}:/root/.openclaw/agents/${agentId}/agent/sessions:rw`);
+      binds.push(`${sessionsDir}:/home/node/.openclaw/agents/${agentId}/agent/sessions:rw`);
       
       // REAL memory directory (read-write, no secrets here)  
       const memoryDir = path.join(agentAgentDir, "memory");
       await fs.promises.mkdir(memoryDir, { recursive: true });
-      binds.push(`${memoryDir}:/root/.openclaw/agents/${agentId}/agent/memory:rw`);
+      binds.push(`${memoryDir}:/home/node/.openclaw/agents/${agentId}/agent/memory:rw`);
     }
   }
   
@@ -163,7 +163,7 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
   // =========================================================================
   const workspaceDir = path.join(openclawDir, "workspace");
   await fs.promises.mkdir(workspaceDir, { recursive: true });
-  binds.push(`${workspaceDir}:/root/.openclaw/workspace:rw`);
+  binds.push(`${workspaceDir}:/home/node/.openclaw/workspace:rw`);
   
   // Per-agent workspaces (workspace-{agentId})
   try {
@@ -173,7 +173,7 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
         const wsPath = path.join(openclawDir, entry);
         const stat = await fs.promises.stat(wsPath);
         if (stat.isDirectory()) {
-          binds.push(`${wsPath}:/root/.openclaw/${entry}:rw`);
+          binds.push(`${wsPath}:/home/node/.openclaw/${entry}:rw`);
         }
       }
     }
