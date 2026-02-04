@@ -6,29 +6,76 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 const logger = createSubsystemLogger("security/secrets-proxy-allowlist");
 
 export const DEFAULT_ALLOWED_DOMAINS = [
-  // Core LLM providers
+  // ==========================================
+  // LLM Providers (from pi-ai)
+  // ==========================================
   "api.anthropic.com",
   "api.openai.com",
-  // Google APIs (covers generativelanguage, cloudcode-pa, aiplatform, etc.)
+  "auth.openai.com",
+  // Google APIs (covers generativelanguage, cloudcode-pa, oauth2, ai.google.dev, etc.)
   "googleapis.com",
-  "api.openrouter.ai",
-
-  // Search / Perplexity
-  "api.perplexity.ai",
-
-  // Audio transcription
-  "api.groq.com",
-
-  // Messaging channels
-  "api.telegram.org",
-
-  // Alternative providers
+  "google.com",     // accounts.google.com for OAuth
+  "ai.google.dev",
+  // OpenRouter
+  "openrouter.ai",
+  // Mistral
+  "api.mistral.ai",
+  // xAI / Grok
+  "api.x.ai",
+  "api.z.ai",
+  // Cerebras
+  "api.cerebras.ai",
+  // Kimi / Moonshot
+  "api.kimi.com",
+  "api.moonshot.ai",
+  // Minimax
   "api.minimax.chat",
   "api.minimax.io",
-  "api.moonshot.ai",
+  "api.minimaxi.com",
+  // Qwen
   "portal.qwen.ai",
+  // Synthetic
   "api.synthetic.new",
+  // Venice
   "api.venice.ai",
+  // HuggingFace
+  "router.huggingface.co",
+  "huggingface.co",
+  // Vercel AI Gateway
+  "ai-gateway.vercel.sh",
+  // GitHub Copilot
+  "api.github.com",
+  "api.individual.githubcopilot.com",
+  // AWS Bedrock (common regions)
+  "amazonaws.com",
+
+  // ==========================================
+  // Search / Web Tools
+  // ==========================================
+  "api.perplexity.ai",
+  "api.search.brave.com",
+  "api.firecrawl.dev",
+
+  // ==========================================
+  // Audio / TTS / Media
+  // ==========================================
+  "api.groq.com",
+  "api.deepgram.com",
+  "api.elevenlabs.io",
+
+  // ==========================================
+  // Messaging Channels
+  // ==========================================
+  "api.telegram.org",
+  "discord.com",
+  "api.pluralkit.me",
+  // Slack
+  "slack.com",
+  "files.slack.com",
+  "slack-edge.com",
+  // Feishu / Lark
+  "larksuite.com",
+  "feishu.cn",
 ];
 
 const ALLOWLIST_PATH = path.join(STATE_DIR, "allowlist.json");
