@@ -4,7 +4,7 @@ import type { AuthProfileStore, OAuthCredential } from "../agents/auth-profiles/
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { ensureAuthProfileStore } from "../agents/auth-profiles.js";
 import { resolveApiKeyForProfile } from "../agents/auth-profiles/oauth.js";
-import { loadConfig } from "../config/config.js";
+import { loadConfig } from "../config/io.js";
 
 /**
  * Central registry of all secrets available to the proxy.

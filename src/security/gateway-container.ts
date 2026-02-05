@@ -167,9 +167,9 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
     "bridge",
     "--add-host",
     `host.docker.internal:host-gateway`,
-    // Port mapping for gateway WebSocket server (uses configured port)
+    // Port mapping for gateway WebSocket server - bind to localhost only for secure mode
     "-p",
-    `${opts.gatewayPort}:${opts.gatewayPort}`,
+    `127.0.0.1:${opts.gatewayPort}:${opts.gatewayPort}`,
     // Tell container to bind to the configured port
     "-e",
     `PORT=${opts.gatewayPort}`,
@@ -209,8 +209,27 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
     }
   }
 
-  // Add filtered environment variables
+  // Keys that are explicitly set above - don't override with filteredEnv
+  const explicitlySetKeys = new Set([
+    "PORT",
+    "OPENCLAW_SECURE_MODE",
+    "PROXY_URL",
+    "OPENCLAW_STATE_DIR",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "PWD",
+    "PATH",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+  ]);
+
+  // Add filtered environment variables (excluding explicitly set keys)
   for (const [key, value] of Object.entries(filteredEnv)) {
+    if (explicitlySetKeys.has(key)) {
+      logger.debug(`Skipping explicitly set env var: ${key}`);
+      continue;
+    }
     args.push("-e", `${key}=${value}`);
   }
 
