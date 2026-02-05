@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "./io.js";
 import { resolveConfigPath } from "./paths.js";
+import { sanitizeConfigSecrets } from "./sanitize-secrets.js";
 
 /**
  * Generates sanitized versions of config files for secure container mounting.
@@ -56,18 +57,10 @@ export async function prepareSanitizedMounts(opts?: {
   // =========================================================================
   const configPath = resolveConfigPath();
   if (configPath && fs.existsSync(configPath)) {
-    const originalSecureMode = process.env.OPENCLAW_SECURE_MODE;
-    const originalCacheDisable = process.env.OPENCLAW_DISABLE_CONFIG_CACHE;
-
-    // Set secure mode so sanitizeConfigSecrets runs
-    process.env.OPENCLAW_SECURE_MODE = "1";
-    // Disable config cache to ensure we get a fresh sanitized config
-    // Otherwise we might get a cached unsanitized version
-    process.env.OPENCLAW_DISABLE_CONFIG_CACHE = "1";
-
     try {
-      // Load config (sanitizeConfigSecrets is applied automatically)
-      const config = loadConfig();
+      // Load raw config then sanitize explicitly (don't use env var to avoid race conditions)
+      const rawConfig = loadConfig();
+      const config = sanitizeConfigSecrets(rawConfig, { force: true });
 
       // In secure mode, Docker connections appear from bridge IP (e.g., 172.17.0.1), not localhost.
       // Add the detected Docker bridge IP to trustedProxies so the gateway treats these as local.
@@ -89,17 +82,8 @@ export async function prepareSanitizedMounts(opts?: {
 
       // Mount to expected container path (container runs as 'node' user)
       binds.push(`${sanitizedConfigPath}:/home/node/.openclaw/openclaw${ext}:ro`);
-    } finally {
-      if (originalSecureMode === undefined) {
-        delete process.env.OPENCLAW_SECURE_MODE;
-      } else {
-        process.env.OPENCLAW_SECURE_MODE = originalSecureMode;
-      }
-      if (originalCacheDisable === undefined) {
-        delete process.env.OPENCLAW_DISABLE_CONFIG_CACHE;
-      } else {
-        process.env.OPENCLAW_DISABLE_CONFIG_CACHE = originalCacheDisable;
-      }
+    } catch (err) {
+      throw new Error(`Failed to sanitize config: ${String(err)}`);
     }
   }
 

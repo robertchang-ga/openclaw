@@ -2,11 +2,15 @@ import type { OpenClawConfig } from "./types.openclaw.js";
 
 /**
  * Sanitizes a config object by replacing sensitive values with placeholders.
- * Used in secure mode (OPENCLAW_SECURE_MODE=1) to ensure no secrets exist in the container.
+ * Used in secure mode to ensure no secrets exist in the container.
+ * @param opts.force - If true, sanitize regardless of OPENCLAW_SECURE_MODE env var
  */
-export function sanitizeConfigSecrets(cfg: OpenClawConfig): OpenClawConfig {
-  // Don't modify if not in secure mode
-  if (process.env.OPENCLAW_SECURE_MODE !== "1") {
+export function sanitizeConfigSecrets(
+  cfg: OpenClawConfig,
+  opts?: { force?: boolean },
+): OpenClawConfig {
+  // Don't modify if not in secure mode (unless forced)
+  if (!opts?.force && process.env.OPENCLAW_SECURE_MODE !== "1") {
     return cfg;
   }
 
