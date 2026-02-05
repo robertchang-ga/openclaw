@@ -29,7 +29,6 @@ import { findLegacyConfigIssues } from "./legacy.js";
 import { normalizeConfigPaths } from "./normalize-paths.js";
 import { resolveConfigPath, resolveDefaultConfigCandidates, resolveStateDir } from "./paths.js";
 import { applyConfigOverrides } from "./runtime-overrides.js";
-import { sanitizeConfigSecrets } from "./sanitize-secrets.js";
 import { validateConfigObjectWithPlugins } from "./validation.js";
 import { compareOpenClawVersions } from "./version.js";
 

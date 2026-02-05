@@ -91,6 +91,17 @@ const SECRET_EXACT_MATCHES = new Set([
 ]);
 
 /**
+ * Env vars that should be passed to container despite matching secret patterns.
+ * These are OpenClaw-specific credentials needed for gateway operation.
+ */
+const ALLOWED_SECRET_ENV_VARS = new Set([
+  "OPENCLAW_GATEWAY_TOKEN", // Gateway auth token
+  "OPENCLAW_GATEWAY_PASSWORD", // Gateway auth password
+  "CLAWDBOT_GATEWAY_TOKEN", // Legacy alias
+  "CLAWDBOT_GATEWAY_PASSWORD", // Legacy alias
+]);
+
+/**
  * Filters environment variables to exclude secrets.
  * P1 Fix: Now covers AWS credentials and other common secret patterns.
  */
@@ -101,6 +112,12 @@ function filterSecretEnv(env: Record<string, string | undefined>): Record<string
     if (!value) continue;
 
     const upperKey = key.toUpperCase();
+
+    // Allow OpenClaw-specific env vars needed for gateway operation
+    if (ALLOWED_SECRET_ENV_VARS.has(upperKey)) {
+      filtered[key] = value;
+      continue;
+    }
 
     // Check exact matches first
     if (SECRET_EXACT_MATCHES.has(upperKey)) {
