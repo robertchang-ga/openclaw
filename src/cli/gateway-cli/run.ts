@@ -399,11 +399,15 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
         } catch (err) {
           gatewayLog.error(`Error cleaning up sanitized mounts: ${String(err)}`);
         }
-        defaultRuntime.exit(0);
       };
 
-      process.on("SIGINT", shutdown);
-      process.on("SIGTERM", shutdown);
+      // Handle shutdown signals - ensure cleanup completes before exit
+      const handleShutdown = () => {
+        void shutdown().then(() => defaultRuntime.exit(0));
+      };
+
+      process.on("SIGINT", handleShutdown);
+      process.on("SIGTERM", handleShutdown);
 
       gatewayLog.info("Secure mode running. Press Ctrl+C to stop.");
 
