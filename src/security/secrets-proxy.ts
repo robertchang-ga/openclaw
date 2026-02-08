@@ -334,15 +334,20 @@ export async function startSecretsProxy(opts: SecretsProxyOptions): Promise<http
 
       logger.info(`Proxying request: ${method} ${rawTargetUrl}`);
 
-      // P0 Fix: Only pass body for methods that should have one
-      // Security: undici v7 request() does NOT follow redirects (requires explicit redirect
-      // interceptor), so an allowlisted host cannot 30x to a non-allowlisted destination.
-      // Do NOT add a redirect interceptor here; every new target must pass through the proxy.
+      // Security: undici v7 request() does not follow redirects by default (requires
+      // explicit RedirectHandler interceptor). Do NOT add one — an allowlisted host
+      // could 30x to a non-allowlisted destination. Each new target must pass through
+      // the proxy for re-validation. The 3xx check below enforces this explicitly.
       const response = await request(targetUrl, {
         method: method as import("undici").Dispatcher.HttpMethod,
         headers,
         body: hasBody ? modifiedBody : undefined,
       });
+
+      // Defense-in-depth: reject any 3xx that somehow got through
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        logger.warn(`Blocking redirect (${response.statusCode}) from ${targetUrl} to ${response.headers.location}`);
+      }
 
       res.statusCode = response.statusCode;
 
