@@ -343,17 +343,17 @@ openclaw gateway --secure
 
 The `--secure` flag starts a host-side secrets proxy + an isolated Docker container. A socat relay bridges the air-gapped container network to the host proxy. The container never sees real credentials — only placeholder tokens that the proxy replaces at request time.
 
-```
-Host                                    Docker (internal network)
-┌──────────────┐    ┌──────────────┐    ┌──────────────────────┐
-│ Secrets      │◀───│ Relay        │◀───│ Gateway Container    │
-│ Proxy        │    │ (socat)      │    │ (no secrets in env   │
-│ 127.0.0.1    │    │              │    │  or filesystem)      │
-│              │    └──────────────┘    └──────────────────────┘
-│ Injects keys │
-│ at network   │──────▶  LLM APIs (Anthropic, OpenAI, …)
-│ edge         │
-└──────────────┘
+```mermaid
+graph LR
+  GW["Gateway Container<br/>(no secrets)"] -->|PROXY_URL| RELAY["Relay<br/>(socat)"]
+  RELAY -->|forwards| PROXY["Secrets Proxy<br/>127.0.0.1 (host)"]
+  PROXY -->|injects credentials| API["☁️ LLM APIs"]
+  API -->|response| PROXY --> RELAY --> GW
+
+  style GW fill:#1a1a2e,color:#fff
+  style RELAY fill:#16213e,color:#fff
+  style PROXY fill:#0f3460,color:#fff
+  style API fill:#533483,color:#fff
 ```
 
 **Allowlist CLI** — manage which domains the proxy will forward to:
