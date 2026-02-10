@@ -142,10 +142,10 @@ export function installSecureFetch(): void {
 
   PROXY_URL = process.env.PROXY_URL;
   if (!PROXY_URL) {
-    throw new Error(
-      "[secure-fetch] OPENCLAW_SECURE_MODE=1 but PROXY_URL is not set. " +
-        "Cannot start in secure mode without a proxy.",
-    );
+    // On the host, PROXY_URL is never set — skip wrapping silently.
+    // Inside the container, PROXY_URL is injected by the Docker flow;
+    // if missing there, secureFetch() will use originalFetch as a safe fallback.
+    return;
   }
 
   // Replace global fetch

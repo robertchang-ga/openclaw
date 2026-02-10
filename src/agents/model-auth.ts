@@ -241,7 +241,8 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
   const pick = (envVar: string): EnvApiKeyResult | null => {
     const value = normalizeOptionalSecretInput(process.env[envVar]);
     if (!value) {
-      if (process.env.OPENCLAW_SECURE_MODE === "1") {
+      // Only emit placeholders inside the container (where PROXY_URL is injected)
+      if (process.env.PROXY_URL) {
         return { apiKey: `{{${envVar}}}`, source: "secure proxy placeholder" };
       }
       return null;
