@@ -1,4 +1,5 @@
 import process from "node:process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { execDocker, dockerContainerState } from "../agents/sandbox/docker.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 
@@ -127,6 +128,7 @@ async function stopRelayContainer(): Promise<void> {
  * Full cleanup: gateway container, relay container, and internal network.
  */
 export async function stopGatewayContainer(): Promise<void> {
+  stopSocatForwarder();
   const state = await dockerContainerState(GATEWAY_CONTAINER_NAME);
   if (state.exists) {
     logger.info(`Stopping existing gateway container: ${GATEWAY_CONTAINER_NAME}`);
@@ -134,6 +136,63 @@ export async function stopGatewayContainer(): Promise<void> {
   }
   await stopRelayContainer();
   await removeSecureNetwork();
+}
+
+/** Host-side socat process for forwarding the gateway port to the container's internal IP. */
+let socatProcess: ChildProcess | null = null;
+
+/**
+ * Get the container's IP address on the internal network.
+ */
+async function getContainerIp(containerName: string, networkName: string): Promise<string> {
+  const result = await execDocker([
+    "inspect",
+    "--format",
+    `{{(index .NetworkSettings.Networks "${networkName}").IPAddress}}`,
+    containerName,
+  ]);
+  const ip = result.stdout.trim();
+  if (!ip) {
+    throw new Error(`Could not get IP of ${containerName} on network ${networkName}`);
+  }
+  return ip;
+}
+
+/**
+ * Start a host-side socat process to forward hostPort → containerIp:containerPort.
+ * This allows the gateway port to be accessible on the host without putting the
+ * container on the bridge network (which would give it outbound internet access).
+ */
+function startSocatForwarder(hostPort: number, containerIp: string, containerPort: number): ChildProcess {
+  const proc = spawn(
+    "socat",
+    [
+      `TCP-LISTEN:${hostPort},bind=127.0.0.1,fork,reuseaddr`,
+      `TCP:${containerIp}:${containerPort}`,
+    ],
+    { stdio: "ignore", detached: false },
+  );
+  proc.on("error", (err) => {
+    logger.error(`socat forwarder error: ${String(err)}`);
+  });
+  proc.on("exit", (code) => {
+    if (code !== null && code !== 0) {
+      logger.warn(`socat forwarder exited with code ${code}`);
+    }
+  });
+  logger.info(`socat forwarder started: 127.0.0.1:${hostPort} → ${containerIp}:${containerPort}`);
+  return proc;
+}
+
+/**
+ * Stop the host-side socat forwarder if running.
+ */
+function stopSocatForwarder(): void {
+  if (socatProcess) {
+    socatProcess.kill();
+    socatProcess = null;
+    logger.info("socat forwarder stopped");
+  }
 }
 
 export async function startGatewayContainer(opts: GatewayContainerOptions): Promise<string> {
@@ -157,11 +216,6 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
     // Internal-only network: blocks ALL outbound internet access
     "--network",
     SECURE_NETWORK_NAME,
-    // Port mapping for gateway WebSocket server - bind to localhost only
-    // This works because Docker creates a proxy on the host that forwards to the container
-    // even on internal networks (the host can always reach its own containers)
-    "-p",
-    `127.0.0.1:${opts.gatewayPort}:${opts.gatewayPort}`,
     // Tell container to bind to the configured port
     "-e",
     `PORT=${opts.gatewayPort}`,
@@ -231,12 +285,18 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
 
   args.push(GATEWAY_IMAGE);
 
-  // Run gateway with allow-unconfigured flag for secure mode
-  // Bind to 0.0.0.0 inside container since we're on an internal network (no external exposure)
-  args.push("node", "dist/index.js", "gateway", "--allow-unconfigured", "--bind", "loopback");
+  // Bind to any inside container — safe since the container is on an internal-only network
+  // with no outbound internet. The host socat forwarder restricts access to 127.0.0.1.
+  args.push("node", "dist/index.js", "gateway", "--allow-unconfigured", "--bind", "any");
 
   logger.info(`Starting gateway container: ${GATEWAY_CONTAINER_NAME} (network: ${SECURE_NETWORK_NAME})`);
   await execDocker(args);
+
+  // Get the container's IP on the internal network and start a host-side socat forwarder.
+  // This makes the gateway port accessible on the host (127.0.0.1:gatewayPort) without
+  // putting the container on the bridge network (which would give it outbound internet access).
+  const containerIp = await getContainerIp(GATEWAY_CONTAINER_NAME, SECURE_NETWORK_NAME);
+  socatProcess = startSocatForwarder(opts.gatewayPort, containerIp, opts.gatewayPort);
 
   return GATEWAY_CONTAINER_NAME;
 }
