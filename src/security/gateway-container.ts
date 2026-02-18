@@ -285,9 +285,10 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
 
   args.push(GATEWAY_IMAGE);
 
-  // Bind to any inside container — safe since the container is on an internal-only network
-  // with no outbound internet. The host socat forwarder restricts access to 127.0.0.1.
-  args.push("node", "dist/index.js", "gateway", "--allow-unconfigured", "--bind", "any");
+  // Bind to lan (all interfaces) inside container — safe since the container is on an
+  // internal-only network with no outbound internet. The host socat forwarder restricts
+  // access to 127.0.0.1 on the host side.
+  args.push("node", "dist/index.js", "gateway", "--allow-unconfigured", "--bind", "lan");
 
   logger.info(`Starting gateway container: ${GATEWAY_CONTAINER_NAME} (network: ${SECURE_NETWORK_NAME})`);
   await execDocker(args);
