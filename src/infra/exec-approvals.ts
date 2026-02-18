@@ -372,7 +372,12 @@ export function resolveExecApprovals(
   agentId?: string,
   overrides?: ExecApprovalsDefaultOverrides,
 ): ExecApprovalsResolved {
-  const file = ensureExecApprovals();
+  // In secure (container) mode, the host owns exec-approvals.json.
+  // Skip the write entirely — the container reads policy via the socket.
+  const isSecureMode = process.env.OPENCLAW_SECURE_MODE === "1";
+  const file = isSecureMode
+    ? (loadExecApprovals() ?? { version: 1 as const })
+    : ensureExecApprovals();
   return resolveExecApprovalsFromFile({
     file,
     agentId,
