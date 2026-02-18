@@ -4,8 +4,10 @@ import { listPairingChannels, notifyPairingApproved } from "../channels/plugins/
 import { loadConfig } from "../config/config.js";
 import { resolvePairingIdLabel } from "../pairing/pairing-labels.js";
 import {
+  addChannelAllowFromStoreEntry,
   approveChannelPairingCode,
   listChannelPairingRequests,
+  removeChannelAllowFromStoreEntry,
   type PairingChannel,
 } from "../pairing/pairing-store.js";
 import { defaultRuntime } from "../runtime.js";
@@ -158,5 +160,87 @@ export function registerPairingCli(program: Command) {
       await notifyApproved(channel, approved.id).catch((err) => {
         defaultRuntime.log(theme.warn(`Failed to notify requester: ${String(err)}`));
       });
+    });
+
+  pairing
+    .command("authorize")
+    .description("Directly authorize a sender without a pending pairing request")
+    .addHelpText(
+      "after",
+      () =>
+        `\n${theme.heading("Examples:")}\n` +
+        `  ${theme.command("openclaw pairing authorize telegram 6979653619")}\n` +
+        `    Authorize a Telegram user ID directly from the host CLI.\n\n` +
+        `${theme.muted("Use this when the bot cannot receive messages yet (e.g. secure mode) and the chat-based /pair flow is unavailable.")}\n`,
+    )
+    .option("--channel <channel>", `Channel (${channels.join(", ")})`)
+    .option("--account <accountId>", "Account id (for multi-account channels)")
+    .argument(
+      "<channelOrId>",
+      `Channel (${channels.join(", ")}) or sender ID when --channel is set`,
+    )
+    .argument("[id]", "Sender ID (when channel is passed as the 1st arg)")
+    .action(async (channelOrId, id, opts) => {
+      const channelRaw = opts.channel ?? channelOrId;
+      const senderId = opts.channel ? channelOrId : id;
+      if (!opts.channel && !id) {
+        throw new Error(
+          `Usage: ${formatCliCommand("openclaw pairing authorize <channel> <senderId>")} (or: ${formatCliCommand("openclaw pairing authorize --channel <channel> <senderId>")})`,
+        );
+      }
+      const channel = parseChannel(channelRaw, channels);
+      const accountId = String(opts.account ?? "").trim();
+      const result = await addChannelAllowFromStoreEntry({
+        channel,
+        entry: String(senderId),
+        accountId: accountId || undefined,
+      });
+      const idLabel = resolvePairingIdLabel(channel);
+      if (!result.changed) {
+        defaultRuntime.log(
+          `${theme.muted(channel)} ${idLabel.toLowerCase()} ${theme.command(String(senderId))} is already authorized.`,
+        );
+        return;
+      }
+      defaultRuntime.log(
+        `${theme.success("Authorized")} ${theme.muted(channel)} sender ${theme.command(String(senderId))}.`,
+      );
+    });
+
+  pairing
+    .command("revoke")
+    .description("Revoke a previously authorized sender")
+    .option("--channel <channel>", `Channel (${channels.join(", ")})`)
+    .option("--account <accountId>", "Account id (for multi-account channels)")
+    .argument(
+      "<channelOrId>",
+      `Channel (${channels.join(", ")}) or sender ID when --channel is set`,
+    )
+    .argument("[id]", "Sender ID (when channel is passed as the 1st arg)")
+    .action(async (channelOrId, id, opts) => {
+      const channelRaw = opts.channel ?? channelOrId;
+      const senderId = opts.channel ? channelOrId : id;
+      if (!opts.channel && !id) {
+        throw new Error(
+          `Usage: ${formatCliCommand("openclaw pairing revoke <channel> <senderId>")} (or: ${formatCliCommand("openclaw pairing revoke --channel <channel> <senderId>")})`,
+        );
+      }
+      const channel = parseChannel(channelRaw, channels);
+      const accountId = String(opts.account ?? "").trim();
+      const result = await removeChannelAllowFromStoreEntry({
+        channel,
+        entry: String(senderId),
+        accountId: accountId || undefined,
+      });
+      const idLabel = resolvePairingIdLabel(channel);
+      if (!result.changed) {
+        defaultRuntime.log(
+          `${theme.muted(channel)} ${idLabel.toLowerCase()} ${theme.command(String(senderId))} was not in the authorized list.`,
+        );
+        return;
+      }
+      defaultRuntime.log(
+        `${theme.success("Revoked")} ${theme.muted(channel)} sender ${theme.command(String(senderId))}.`,
+      );
     });
 }
