@@ -61,6 +61,7 @@ export type ExecApprovalsFile = {
   };
   defaults?: ExecApprovalsDefaults;
   agents?: Record<string, ExecApprovalsAgent>;
+  hostExecBins?: string[];
 };
 
 export type ExecApprovalsSnapshot = {
@@ -78,6 +79,7 @@ export type ExecApprovalsResolved = {
   defaults: Required<ExecApprovalsDefaults>;
   agent: Required<ExecApprovalsDefaults>;
   allowlist: ExecAllowlistEntry[];
+  hostExecBins: Set<string>;
   file: ExecApprovalsFile;
 };
 
@@ -224,6 +226,11 @@ export function normalizeExecApprovals(file: ExecApprovalsFile): ExecApprovalsFi
       agents[key] = { ...agent, allowlist };
     }
   }
+  const hostExecBins = Array.isArray(file.hostExecBins)
+    ? file.hostExecBins
+        .map((b) => (typeof b === "string" ? b.trim().toLowerCase() : ""))
+        .filter(Boolean)
+    : undefined;
   const normalized: ExecApprovalsFile = {
     version: 1,
     socket: {
@@ -237,6 +244,7 @@ export function normalizeExecApprovals(file: ExecApprovalsFile): ExecApprovalsFi
       autoAllowSkills: file.defaults?.autoAllowSkills,
     },
     agents,
+    hostExecBins: hostExecBins && hostExecBins.length > 0 ? hostExecBins : undefined,
   };
   return normalized;
 }
@@ -419,6 +427,11 @@ export function resolveExecApprovalsFromFile(params: {
     ...(Array.isArray(wildcard.allowlist) ? wildcard.allowlist : []),
     ...(Array.isArray(agent.allowlist) ? agent.allowlist : []),
   ];
+  const hostExecBins = new Set<string>(
+    (Array.isArray(file.hostExecBins) ? file.hostExecBins : [])
+      .map((b) => (typeof b === "string" ? b.trim().toLowerCase() : ""))
+      .filter(Boolean),
+  );
   return {
     path: params.path ?? resolveExecApprovalsPath(),
     socketPath: expandHome(
@@ -428,6 +441,7 @@ export function resolveExecApprovalsFromFile(params: {
     defaults: resolvedDefaults,
     agent: resolvedAgent,
     allowlist,
+    hostExecBins,
     file,
   };
 }

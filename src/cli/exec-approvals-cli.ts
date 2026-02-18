@@ -449,4 +449,105 @@ export function registerExecApprovalsCli(program: Command) {
       }
     });
   nodesCallOpts(allowlistRemove);
+
+  const hostExecBins = approvals
+    .command("host-exec-bins")
+    .description("Manage binaries that run on the host (gateway) instead of the container")
+    .addHelpText(
+      "after",
+      () =>
+        `\n${theme.heading("Examples:")}\n${formatExample(
+          "openclaw approvals host-exec-bins add gog",
+          "Route gog commands to the host.",
+        )}\n${formatExample(
+          "openclaw approvals host-exec-bins add supabase",
+          "Route supabase commands to the host.",
+        )}\n${formatExample(
+          "openclaw approvals host-exec-bins remove gog",
+          "Stop routing gog to the host.",
+        )}\n${formatExample(
+          "openclaw approvals host-exec-bins list",
+          "List all binaries routed to the host.",
+        )}\n`,
+    );
+
+  hostExecBins
+    .command("list")
+    .description("List binaries routed to the host")
+    .option("--node <node>", "Target node id/name/IP")
+    .option("--gateway", "Force gateway approvals", false)
+    .action(async (opts: ExecApprovalsCliOpts) => {
+      try {
+        const { snapshot } = await loadSnapshotTarget(opts);
+        const bins = Array.isArray(snapshot.file?.hostExecBins) ? snapshot.file.hostExecBins : [];
+        if (opts.json) {
+          defaultRuntime.log(JSON.stringify(bins));
+          return;
+        }
+        if (bins.length === 0) {
+          defaultRuntime.log(theme.muted("No host exec bins configured."));
+          return;
+        }
+        defaultRuntime.log(theme.heading("Host Exec Bins"));
+        for (const bin of bins) {
+          defaultRuntime.log(`  ${bin}`);
+        }
+      } catch (err) {
+        defaultRuntime.error(formatCliError(err));
+        defaultRuntime.exit(1);
+      }
+    });
+
+  const hostExecBinsAdd = hostExecBins
+    .command("add <bin>")
+    .description("Add a binary to route to the host")
+    .option("--node <node>", "Target node id/name/IP")
+    .option("--gateway", "Force gateway approvals", false)
+    .action(async (bin: string, opts: ExecApprovalsCliOpts) => {
+      try {
+        const trimmed = requireTrimmedNonEmpty(bin, "Binary name required.").toLowerCase();
+        const { source, nodeId, targetLabel, baseHash, snapshot } =
+          await loadWritableSnapshotTarget(opts);
+        const file = snapshot.file ?? { version: 1 as const };
+        file.version = 1;
+        const existing = Array.isArray(file.hostExecBins) ? file.hostExecBins : [];
+        if (existing.includes(trimmed)) {
+          defaultRuntime.log("Already in host exec bins.");
+          return;
+        }
+        file.hostExecBins = [...existing, trimmed];
+        await saveSnapshotTargeted({ opts, source, nodeId, file, baseHash, targetLabel });
+      } catch (err) {
+        defaultRuntime.error(formatCliError(err));
+        defaultRuntime.exit(1);
+      }
+    });
+  nodesCallOpts(hostExecBinsAdd);
+
+  const hostExecBinsRemove = hostExecBins
+    .command("remove <bin>")
+    .description("Remove a binary from host routing")
+    .option("--node <node>", "Target node id/name/IP")
+    .option("--gateway", "Force gateway approvals", false)
+    .action(async (bin: string, opts: ExecApprovalsCliOpts) => {
+      try {
+        const trimmed = requireTrimmedNonEmpty(bin, "Binary name required.").toLowerCase();
+        const { source, nodeId, targetLabel, baseHash, snapshot } =
+          await loadWritableSnapshotTarget(opts);
+        const file = snapshot.file ?? { version: 1 as const };
+        file.version = 1;
+        const existing = Array.isArray(file.hostExecBins) ? file.hostExecBins : [];
+        const next = existing.filter((b) => b !== trimmed);
+        if (next.length === existing.length) {
+          defaultRuntime.log("Binary not found in host exec bins.");
+          return;
+        }
+        file.hostExecBins = next.length > 0 ? next : undefined;
+        await saveSnapshotTargeted({ opts, source, nodeId, file, baseHash, targetLabel });
+      } catch (err) {
+        defaultRuntime.error(formatCliError(err));
+        defaultRuntime.exit(1);
+      }
+    });
+  nodesCallOpts(hostExecBinsRemove);
 }

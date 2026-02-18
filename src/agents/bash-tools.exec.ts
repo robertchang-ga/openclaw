@@ -355,6 +355,19 @@ export function createExecTool(
         host = "gateway";
       }
 
+      // hostExecBins: if the command's binary is in the hostExecBins list, force host=gateway.
+      // This is independent of security level and configured host — it's a hard routing gate.
+      if (host !== "gateway") {
+        const approvalsMeta = resolveExecApprovals(agentId);
+        if (approvalsMeta.hostExecBins.size > 0) {
+          const cmdBin = params.command.trim().split(/\s+/)[0] ?? "";
+          const binBasename = cmdBin.includes("/") ? (cmdBin.split("/").pop() ?? cmdBin) : cmdBin;
+          if (approvalsMeta.hostExecBins.has(binBasename.toLowerCase())) {
+            host = "gateway";
+          }
+        }
+      }
+
       const configuredSecurity = defaults?.security ?? (host === "sandbox" ? "deny" : "allowlist");
       const requestedSecurity = normalizeExecSecurity(params.security);
       let security = minSecurity(configuredSecurity, requestedSecurity ?? configuredSecurity);
