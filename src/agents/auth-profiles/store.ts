@@ -235,12 +235,13 @@ function applyLegacyStore(store: AuthProfileStore, legacy: LegacyAuthStore): voi
 }
 
 export function loadAuthProfileStore(): AuthProfileStore {
+  const isSecureMode = process.env.OPENCLAW_SECURE_MODE === "1";
   const authPath = resolveAuthStorePath();
   const raw = loadJsonFile(authPath);
   const asStore = coerceAuthStore(raw);
   if (asStore) {
     // Sync from external CLI tools on every load
-    const synced = syncExternalCliCredentials(asStore);
+    const synced = !isSecureMode && syncExternalCliCredentials(asStore);
     if (synced) {
       saveJsonFile(authPath, asStore);
     }
@@ -268,12 +269,13 @@ function loadAuthProfileStoreForAgent(
   agentDir?: string,
   _options?: { allowKeychainPrompt?: boolean },
 ): AuthProfileStore {
+  const isSecureMode = process.env.OPENCLAW_SECURE_MODE === "1";
   const authPath = resolveAuthStorePath(agentDir);
   const raw = loadJsonFile(authPath);
   const asStore = coerceAuthStore(raw);
   if (asStore) {
-    // Sync from external CLI tools on every load
-    const synced = syncExternalCliCredentials(asStore);
+    // Sync from external CLI tools on every load (skip in secure mode — read-only fs)
+    const synced = !isSecureMode && syncExternalCliCredentials(asStore);
     if (synced) {
       saveJsonFile(authPath, asStore);
     }
@@ -287,7 +289,10 @@ function loadAuthProfileStoreForAgent(
     const mainStore = coerceAuthStore(mainRaw);
     if (mainStore && Object.keys(mainStore.profiles).length > 0) {
       // Clone main store to subagent directory for auth inheritance
-      saveJsonFile(authPath, mainStore);
+      // Skip write in secure mode — auth-profiles.json is mounted read-only
+      if (!isSecureMode) {
+        saveJsonFile(authPath, mainStore);
+      }
       log.info("inherited auth-profiles from main agent", { agentDir });
       return mainStore;
     }
@@ -303,9 +308,9 @@ function loadAuthProfileStoreForAgent(
     applyLegacyStore(store, legacy);
   }
 
-  const mergedOAuth = mergeOAuthFileIntoStore(store);
-  const syncedCli = syncExternalCliCredentials(store);
-  const shouldWrite = legacy !== null || mergedOAuth || syncedCli;
+  const mergedOAuth = !isSecureMode && mergeOAuthFileIntoStore(store);
+  const syncedCli = !isSecureMode && syncExternalCliCredentials(store);
+  const shouldWrite = !isSecureMode && (legacy !== null || mergedOAuth || syncedCli);
   if (shouldWrite) {
     saveJsonFile(authPath, store);
   }
@@ -348,6 +353,12 @@ export function ensureAuthProfileStore(
 }
 
 export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string): void {
+  // In secure (container) mode, auth-profiles.json is mounted read-only from the host.
+  // All writes are silently skipped — usage stats, OAuth refresh, etc. don't persist.
+  // Real credential management happens on the host via the secrets proxy.
+  if (process.env.OPENCLAW_SECURE_MODE === "1") {
+    return;
+  }
   const authPath = resolveAuthStorePath(agentDir);
   const payload = {
     version: AUTH_STORE_VERSION,
