@@ -357,11 +357,29 @@ export function createExecTool(
 
       // hostExecBins: if the command's binary is in the hostExecBins list, force host=gateway.
       // This is independent of security level and configured host — it's a hard routing gate.
+      // We scan past common runner prefixes (run, npx, node, bun, pnpm, yarn, deno) so that
+      // commands like `run mcporter` or `npx supabase` still match their intended binary.
       if (host !== "gateway") {
         const approvalsMeta = resolveExecApprovals(agentId);
         if (approvalsMeta.hostExecBins.size > 0) {
-          const cmdBin = params.command.trim().split(/\s+/)[0] ?? "";
-          const binBasename = cmdBin.includes("/") ? (cmdBin.split("/").pop() ?? cmdBin) : cmdBin;
+          const RUNNER_PREFIXES = new Set([
+            "run",
+            "npx",
+            "node",
+            "bun",
+            "pnpm",
+            "yarn",
+            "deno",
+            "tsx",
+            "ts-node",
+          ]);
+          const tokens = params.command.trim().split(/\s+/);
+          // Find the first token that isn't a known runner prefix
+          const binToken =
+            tokens.find((t) => !RUNNER_PREFIXES.has(t.toLowerCase())) ?? tokens[0] ?? "";
+          const binBasename = binToken.includes("/")
+            ? (binToken.split("/").pop() ?? binToken)
+            : binToken;
           if (approvalsMeta.hostExecBins.has(binBasename.toLowerCase())) {
             host = "gateway";
           }
