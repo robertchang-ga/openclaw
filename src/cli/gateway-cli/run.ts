@@ -435,6 +435,12 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
       // Start embedded node host for host-exec commands (hostExecBins).
       // This connects back to the gateway inside the container via the socat forwarder,
       // allowing agents to run commands on the physical host via host=node.
+      // Read gateway auth credentials from config for the embedded node host.
+      // These aren't in process.env — they come from the YAML config file.
+      const cfg = loadConfig();
+      const gatewayAuthToken = cfg.gateway?.auth?.token;
+      const gatewayAuthPassword = cfg.gateway?.auth?.password;
+
       let nodeClient: Awaited<ReturnType<typeof startNodeHost>> | null = null;
       try {
         nodeClient = await startNodeHost({
@@ -442,6 +448,8 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
           gatewayPort: port,
           nodeId: "host-exec",
           displayName: "Secure Mode Host Exec",
+          token: gatewayAuthToken,
+          password: gatewayAuthPassword,
           embedded: true,
         });
         gatewayLog.info("Embedded node host started (id: host-exec)");

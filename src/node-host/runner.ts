@@ -24,6 +24,10 @@ type NodeHostRunOptions = {
   gatewayTlsFingerprint?: string;
   nodeId?: string;
   displayName?: string;
+  /** Explicit gateway auth token (preferred over env var). */
+  token?: string;
+  /** Explicit gateway auth password (preferred over env var). */
+  password?: string;
   /**
    * When true, skip all filesystem persistence (config, device identity).
    * Used when embedding the node host in the --secure mode process.
@@ -92,8 +96,8 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
     nodeId = opts.nodeId?.trim() || crypto.randomUUID();
     displayName = opts.displayName?.trim() || "Embedded Node Host";
     tls = opts.gatewayTls ?? false;
-    token = process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined;
-    password = process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || undefined;
+    token = opts.token?.trim() || process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined;
+    password = opts.password?.trim() || process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || undefined;
     browserProxyEnabled = false;
     deviceIdentity = generateIdentity();
   } else {
