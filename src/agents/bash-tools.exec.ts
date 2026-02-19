@@ -384,7 +384,7 @@ export function createExecTool(
             ? (binToken.split("/").pop() ?? binToken)
             : binToken;
           if (approvalsMeta.hostExecBins.has(binBasename.toLowerCase())) {
-            host = "node";
+            host = "gateway";
             routedByHostExecBins = true;
           }
         }
@@ -458,9 +458,15 @@ export function createExecTool(
       }
 
       if (host === "node") {
-        const approvals = routedByHostExecBins ? null : resolveExecApprovals(agentId, { security, ask });
-        const hostSecurity = routedByHostExecBins ? "full" as ExecSecurity : minSecurity(security, approvals!.agent.security);
-        const hostAsk = routedByHostExecBins ? "off" as ExecAsk : maxAsk(ask, approvals!.agent.ask);
+        const approvals = routedByHostExecBins
+          ? null
+          : resolveExecApprovals(agentId, { security, ask });
+        const hostSecurity = routedByHostExecBins
+          ? ("full" as ExecSecurity)
+          : minSecurity(security, approvals!.agent.security);
+        const hostAsk = routedByHostExecBins
+          ? ("off" as ExecAsk)
+          : maxAsk(ask, approvals!.agent.ask);
         const askFallback = routedByHostExecBins ? undefined : approvals!.agent.askFallback;
         if (!routedByHostExecBins && hostSecurity === "deny") {
           throw new Error("exec denied: host=node security=deny");
@@ -731,7 +737,7 @@ export function createExecTool(
         };
       }
 
-      if (host === "gateway" && !bypassApprovals) {
+      if (host === "gateway" && !bypassApprovals && !routedByHostExecBins) {
         const approvals = resolveExecApprovals(agentId, { security, ask });
         const hostSecurity = minSecurity(security, approvals.agent.security);
         const hostAsk = maxAsk(ask, approvals.agent.ask);
