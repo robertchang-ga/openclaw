@@ -442,6 +442,7 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
           gatewayPort: port,
           nodeId: "host-exec",
           displayName: "Secure Mode Host Exec",
+          embedded: true,
         });
         gatewayLog.info("Embedded node host started (id: host-exec)");
       } catch (err) {

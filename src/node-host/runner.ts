@@ -1,7 +1,8 @@
+import crypto from "node:crypto";
 import { resolveBrowserConfig } from "../browser/config.js";
 import { loadConfig } from "../config/config.js";
 import { GatewayClient } from "../gateway/client.js";
-import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
+import { generateIdentity, loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
@@ -23,6 +24,11 @@ type NodeHostRunOptions = {
   gatewayTlsFingerprint?: string;
   nodeId?: string;
   displayName?: string;
+  /**
+   * When true, skip all filesystem persistence (config, device identity).
+   * Used when embedding the node host in the --secure mode process.
+   */
+  embedded?: boolean;
 };
 
 const DEFAULT_NODE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -72,39 +78,61 @@ function ensureNodePathEnv(): string {
  * Use this when embedding the node host in another process (e.g. --secure mode).
  */
 export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayClient> {
-  const config = await ensureNodeHostConfig();
-  const nodeId = opts.nodeId?.trim() || config.nodeId;
-  if (nodeId !== config.nodeId) {
-    config.nodeId = nodeId;
+  let nodeId: string;
+  let displayName: string;
+  let tls: boolean;
+  let token: string | undefined;
+  let password: string | undefined;
+  let browserProxyEnabled: boolean;
+  let deviceIdentity: ReturnType<typeof generateIdentity>;
+
+  if (opts.embedded) {
+    // Embedded mode: skip all filesystem persistence.
+    // Use caller-provided values and ephemeral in-memory identity.
+    nodeId = opts.nodeId?.trim() || crypto.randomUUID();
+    displayName = opts.displayName?.trim() || "Embedded Node Host";
+    tls = opts.gatewayTls ?? false;
+    token = process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined;
+    password = process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || undefined;
+    browserProxyEnabled = false;
+    deviceIdentity = generateIdentity();
+  } else {
+    const config = await ensureNodeHostConfig();
+    nodeId = opts.nodeId?.trim() || config.nodeId;
+    if (nodeId !== config.nodeId) {
+      config.nodeId = nodeId;
+    }
+    displayName =
+      opts.displayName?.trim() || config.displayName || (await getMachineDisplayName());
+    config.displayName = displayName;
+
+    const gateway: NodeHostGatewayConfig = {
+      host: opts.gatewayHost,
+      port: opts.gatewayPort,
+      tls: opts.gatewayTls ?? loadConfig().gateway?.tls?.enabled ?? false,
+      tlsFingerprint: opts.gatewayTlsFingerprint,
+    };
+    config.gateway = gateway;
+    await saveNodeHostConfig(config);
+
+    const cfg = loadConfig();
+    const resolvedBrowser = resolveBrowserConfig(cfg.browser, cfg);
+    browserProxyEnabled =
+      cfg.nodeHost?.browserProxy?.enabled !== false && resolvedBrowser.enabled;
+    const isRemoteMode = cfg.gateway?.mode === "remote";
+    tls = gateway.tls ?? false;
+    token =
+      process.env.OPENCLAW_GATEWAY_TOKEN?.trim() ||
+      (isRemoteMode ? cfg.gateway?.remote?.token : cfg.gateway?.auth?.token);
+    password =
+      process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() ||
+      (isRemoteMode ? cfg.gateway?.remote?.password : cfg.gateway?.auth?.password);
+    deviceIdentity = loadOrCreateDeviceIdentity();
   }
-  const displayName =
-    opts.displayName?.trim() || config.displayName || (await getMachineDisplayName());
-  config.displayName = displayName;
 
-  const gateway: NodeHostGatewayConfig = {
-    host: opts.gatewayHost,
-    port: opts.gatewayPort,
-    tls: opts.gatewayTls ?? loadConfig().gateway?.tls?.enabled ?? false,
-    tlsFingerprint: opts.gatewayTlsFingerprint,
-  };
-  config.gateway = gateway;
-  await saveNodeHostConfig(config);
-
-  const cfg = loadConfig();
-  const resolvedBrowser = resolveBrowserConfig(cfg.browser, cfg);
-  const browserProxyEnabled =
-    cfg.nodeHost?.browserProxy?.enabled !== false && resolvedBrowser.enabled;
-  const isRemoteMode = cfg.gateway?.mode === "remote";
-  const token =
-    process.env.OPENCLAW_GATEWAY_TOKEN?.trim() ||
-    (isRemoteMode ? cfg.gateway?.remote?.token : cfg.gateway?.auth?.token);
-  const password =
-    process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() ||
-    (isRemoteMode ? cfg.gateway?.remote?.password : cfg.gateway?.auth?.password);
-
-  const host = gateway.host ?? "127.0.0.1";
-  const port = gateway.port ?? 18789;
-  const scheme = gateway.tls ? "wss" : "ws";
+  const host = opts.gatewayHost ?? "127.0.0.1";
+  const port = opts.gatewayPort ?? 18789;
+  const scheme = tls ? "wss" : "ws";
   const url = `${scheme}://${host}:${port}`;
   const pathEnv = ensureNodePathEnv();
   // eslint-disable-next-line no-console
@@ -132,8 +160,8 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
     ],
     pathEnv,
     permissions: undefined,
-    deviceIdentity: loadOrCreateDeviceIdentity(),
-    tlsFingerprint: gateway.tlsFingerprint,
+    deviceIdentity,
+    tlsFingerprint: opts.gatewayTlsFingerprint,
     onEvent: (evt) => {
       if (evt.event !== "node.invoke.request") {
         return;
