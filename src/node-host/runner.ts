@@ -67,7 +67,11 @@ function ensureNodePathEnv(): string {
   return DEFAULT_NODE_PATH;
 }
 
-export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
+/**
+ * Start the node host and return the GatewayClient (non-blocking).
+ * Use this when embedding the node host in another process (e.g. --secure mode).
+ */
+export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayClient> {
   const config = await ensureNodeHostConfig();
   const nodeId = opts.nodeId?.trim() || config.nodeId;
   if (nodeId !== config.nodeId) {
@@ -158,5 +162,14 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
   });
 
   client.start();
+  return client;
+}
+
+/**
+ * Run the node host standalone (blocks forever).
+ * Used by the `openclaw node-host` CLI command.
+ */
+export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
+  await startNodeHost(opts);
   await new Promise(() => {});
 }

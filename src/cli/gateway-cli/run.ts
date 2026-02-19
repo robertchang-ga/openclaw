@@ -31,6 +31,7 @@ import {
 } from "../../security/gateway-container.js";
 import { startSecretsProxy, generateProxyAuthToken } from "../../security/secrets-proxy.js";
 import { loadProxyPort } from "../../security/secrets-proxy-allowlist.js";
+import { startNodeHost } from "../../node-host/runner.js";
 import { createSecretsRegistry } from "../../security/secrets-registry.js";
 import { formatCliCommand } from "../command-format.js";
 import { inheritOptionFromParent } from "../command-options.js";
@@ -431,6 +432,23 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
 
       gatewayLog.info("Gateway container is ready and healthy");
 
+      // Start embedded node host for host-exec commands (hostExecBins).
+      // This connects back to the gateway inside the container via the socat forwarder,
+      // allowing agents to run commands on the physical host via host=node.
+      let nodeClient: Awaited<ReturnType<typeof startNodeHost>> | null = null;
+      try {
+        nodeClient = await startNodeHost({
+          gatewayHost: "127.0.0.1",
+          gatewayPort: port,
+          nodeId: "host-exec",
+          displayName: "Secure Mode Host Exec",
+        });
+        gatewayLog.info("Embedded node host started (id: host-exec)");
+      } catch (err) {
+        gatewayLog.error(`Failed to start embedded node host: ${String(err)}`);
+        // Non-fatal: secure mode still works, just without host exec
+      }
+
       // Set up graceful shutdown handlers
       const abortController = new AbortController();
       const shutdown = async () => {
@@ -447,6 +465,15 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
           gatewayLog.info("Secrets proxy stopped");
         } catch (err) {
           gatewayLog.error(`Error stopping proxy: ${String(err)}`);
+        }
+        // Stop embedded node host
+        if (nodeClient) {
+          try {
+            nodeClient.stop();
+            gatewayLog.info("Embedded node host stopped");
+          } catch (err) {
+            gatewayLog.error(`Error stopping embedded node host: ${String(err)}`);
+          }
         }
         // Cleanup sanitized mount files
         try {
