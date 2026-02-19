@@ -357,8 +357,11 @@ export function createExecTool(
 
       // hostExecBins: if the command's binary is in the hostExecBins list, force host=gateway.
       // This is independent of security level and configured host — it's a hard routing gate.
+      // Binaries listed here are also implicitly authorized (skip the gateway allowlist/approval
+      // flow), since the user explicitly configured them as trusted host-exec binaries.
       // We scan past common runner prefixes (run, npx, node, bun, pnpm, yarn, deno) so that
       // commands like `run mcporter` or `npx supabase` still match their intended binary.
+      let routedByHostExecBins = false;
       if (host !== "gateway") {
         const approvalsMeta = resolveExecApprovals(agentId);
         if (approvalsMeta.hostExecBins.size > 0) {
@@ -382,6 +385,7 @@ export function createExecTool(
             : binToken;
           if (approvalsMeta.hostExecBins.has(binBasename.toLowerCase())) {
             host = "gateway";
+            routedByHostExecBins = true;
           }
         }
       }
@@ -727,7 +731,7 @@ export function createExecTool(
         };
       }
 
-      if (host === "gateway" && !bypassApprovals) {
+      if (host === "gateway" && !bypassApprovals && !routedByHostExecBins) {
         const approvals = resolveExecApprovals(agentId, { security, ask });
         const hostSecurity = minSecurity(security, approvals.agent.security);
         const hostAsk = maxAsk(ask, approvals.agent.ask);
