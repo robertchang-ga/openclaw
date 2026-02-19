@@ -60,6 +60,8 @@ export type GatewayClientOptions = {
   minProtocol?: number;
   maxProtocol?: number;
   tlsFingerprint?: string;
+  /** When true, skip device identity/auth entirely (shared-secret only). */
+  skipDeviceAuth?: boolean;
   onEvent?: (evt: EventFrame) => void;
   onHelloOk?: (hello: HelloOk) => void;
   onConnectError?: (err: Error) => void;
@@ -96,7 +98,7 @@ export class GatewayClient {
   constructor(opts: GatewayClientOptions) {
     this.opts = {
       ...opts,
-      deviceIdentity: opts.deviceIdentity ?? loadOrCreateDeviceIdentity(),
+      deviceIdentity: opts.skipDeviceAuth ? undefined : (opts.deviceIdentity ?? loadOrCreateDeviceIdentity()),
     };
   }
 

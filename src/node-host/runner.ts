@@ -1,8 +1,7 @@
-import crypto from "node:crypto";
+
 import { resolveBrowserConfig } from "../browser/config.js";
 import { loadConfig } from "../config/config.js";
 import { GatewayClient } from "../gateway/client.js";
-import { generateIdentity, loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
@@ -88,18 +87,18 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
   let token: string | undefined;
   let password: string | undefined;
   let browserProxyEnabled: boolean;
-  let deviceIdentity: ReturnType<typeof generateIdentity>;
+  let skipDeviceAuth: boolean;
 
   if (opts.embedded) {
-    // Embedded mode: skip all filesystem persistence.
-    // Use caller-provided values and ephemeral in-memory identity.
-    nodeId = opts.nodeId?.trim() || crypto.randomUUID();
+    // Embedded mode: skip all filesystem persistence and device auth.
+    // Use caller-provided values and authenticate via shared secret only.
+    nodeId = opts.nodeId?.trim() || `embedded-${Date.now()}`;
     displayName = opts.displayName?.trim() || "Embedded Node Host";
     tls = opts.gatewayTls ?? false;
     token = opts.token?.trim() || process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined;
     password = opts.password?.trim() || process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || undefined;
     browserProxyEnabled = false;
-    deviceIdentity = generateIdentity();
+    skipDeviceAuth = true;
   } else {
     const config = await ensureNodeHostConfig();
     nodeId = opts.nodeId?.trim() || config.nodeId;
@@ -131,7 +130,7 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
     password =
       process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() ||
       (isRemoteMode ? cfg.gateway?.remote?.password : cfg.gateway?.auth?.password);
-    deviceIdentity = loadOrCreateDeviceIdentity();
+    skipDeviceAuth = false;
   }
 
   const host = opts.gatewayHost ?? "127.0.0.1";
@@ -164,7 +163,7 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
     ],
     pathEnv,
     permissions: undefined,
-    deviceIdentity,
+    skipDeviceAuth,
     tlsFingerprint: opts.gatewayTlsFingerprint,
     onEvent: (evt) => {
       if (evt.event !== "node.invoke.request") {
