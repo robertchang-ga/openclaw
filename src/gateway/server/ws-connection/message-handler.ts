@@ -414,7 +414,10 @@ export function attachGatewayWsMessageHandler(params: {
           close(1008, truncateCloseReason(authMessage));
         };
         if (!device) {
-          if (scopes.length > 0 && !allowControlUiBypass) {
+          // Clear self-declared scopes for unauthenticated device-less clients.
+          // Shared-secret auth (token/password) is explicitly trusted by the
+          // server operator, so preserve scopes for those connections.
+          if (scopes.length > 0 && !allowControlUiBypass && !sharedAuthOk) {
             scopes = [];
             connectParams.scopes = scopes;
           }
