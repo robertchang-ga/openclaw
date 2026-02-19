@@ -387,6 +387,24 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
         return;
       }
 
+      // Read gateway auth credentials from config.
+      // The sanitized config replaces gateway.auth.token with a placeholder, so
+      // the container relies on OPENCLAW_GATEWAY_TOKEN env var for authentication.
+      const cfg = loadConfig();
+      const gatewayAuthToken = cfg.gateway?.auth?.token;
+      const gatewayAuthPassword = cfg.gateway?.auth?.password;
+
+      const containerEnv: Record<string, string | undefined> = {
+        ...process.env,
+        PROXY_AUTH_TOKEN: proxyAuthToken,
+      };
+      if (gatewayAuthToken) {
+        containerEnv.OPENCLAW_GATEWAY_TOKEN = gatewayAuthToken;
+      }
+      if (gatewayAuthPassword) {
+        containerEnv.OPENCLAW_GATEWAY_PASSWORD = gatewayAuthPassword;
+      }
+
       // Start gateway container with sanitized mounts + network isolation
       let containerName: string;
       try {
@@ -394,7 +412,7 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
           proxyPort,
           proxySocketPath,
           gatewayPort: port,
-          env: { ...process.env, PROXY_AUTH_TOKEN: proxyAuthToken },
+          env: containerEnv,
           binds: sanitizedMounts.binds,
         });
         gatewayLog.info(`Gateway container started: ${containerName}`);
@@ -435,12 +453,6 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
       // Start embedded node host for host-exec commands (hostExecBins).
       // This connects back to the gateway inside the container via the socat forwarder,
       // allowing agents to run commands on the physical host via host=node.
-      // Read gateway auth credentials from config for the embedded node host.
-      // These aren't in process.env — they come from the YAML config file.
-      const cfg = loadConfig();
-      const gatewayAuthToken = cfg.gateway?.auth?.token;
-      const gatewayAuthPassword = cfg.gateway?.auth?.password;
-
       let nodeClient: Awaited<ReturnType<typeof startNodeHost>> | null = null;
       try {
         nodeClient = await startNodeHost({
