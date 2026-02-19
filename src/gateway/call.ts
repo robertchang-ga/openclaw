@@ -270,7 +270,11 @@ export async function callGateway<T = Record<string, unknown>>(
       mode: opts.mode ?? GATEWAY_CLIENT_MODES.CLI,
       role: "operator",
       scopes: ["operator.admin", "operator.approvals", "operator.pairing"],
-      deviceIdentity: loadOrCreateDeviceIdentity(),
+      // In secure mode (container), skip device auth to avoid EACCES on identity dir.
+      // Auth is via shared-secret token; device identity is not needed.
+      ...(process.env.OPENCLAW_SECURE_MODE === "1"
+        ? { skipDeviceAuth: true }
+        : { deviceIdentity: loadOrCreateDeviceIdentity() }),
       minProtocol: opts.minProtocol ?? PROTOCOL_VERSION,
       maxProtocol: opts.maxProtocol ?? PROTOCOL_VERSION,
       onHelloOk: async () => {
