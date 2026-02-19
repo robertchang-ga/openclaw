@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { resolveConfigPath } from "./paths.js";
 import { sanitizeConfigSecrets } from "./sanitize-secrets.js";
 
@@ -216,6 +215,16 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
   const cronDir = path.join(openclawDir, "cron");
   await fs.promises.mkdir(cronDir, { recursive: true });
   binds.push(`${cronDir}:/home/node/.openclaw/cron:rw`);
+
+  // =========================================================================
+  // 7. EXEC-APPROVALS (read-only)
+  // =========================================================================
+  // Mount exec-approvals.json read-only so the container can read hostExecBins
+  // and other approval rules. Writes are skipped in secure mode (EROFS guard).
+  const execApprovalsPath = path.join(openclawDir, "exec-approvals.json");
+  if (fs.existsSync(execApprovalsPath)) {
+    binds.push(`${execApprovalsPath}:/home/node/.openclaw/exec-approvals.json:ro`);
+  }
 
   // =========================================================================
   // 7. CREDENTIALS DIRECTORY - mount only safe files, exclude oauth.json
