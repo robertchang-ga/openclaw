@@ -79,13 +79,16 @@ export function sanitizeConfigSecrets(
   }
 
   // Sanitize gateway auth credentials (for inbound authentication)
-  // The container uses OPENCLAW_GATEWAY_TOKEN env var injected at runtime instead
+  // The container uses OPENCLAW_GATEWAY_TOKEN env var injected at runtime instead.
+  // We must DELETE these keys (not replace with placeholders) because
+  // resolveGatewayAuth uses `authConfig.token ?? env.OPENCLAW_GATEWAY_TOKEN`
+  // and a placeholder string is truthy, preventing the env var fallback.
   if (sanitized.gateway?.auth) {
     if (sanitized.gateway.auth.token) {
-      sanitized.gateway.auth.token = "{{CONFIG:gateway.auth.token}}";
+      delete sanitized.gateway.auth.token;
     }
     if (sanitized.gateway.auth.password) {
-      sanitized.gateway.auth.password = "{{CONFIG:gateway.auth.password}}";
+      delete sanitized.gateway.auth.password;
     }
   }
 
