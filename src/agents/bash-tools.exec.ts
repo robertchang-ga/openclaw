@@ -384,7 +384,7 @@ export function createExecTool(
             ? (binToken.split("/").pop() ?? binToken)
             : binToken;
           if (approvalsMeta.hostExecBins.has(binBasename.toLowerCase())) {
-            host = "gateway";
+            host = "node";
             routedByHostExecBins = true;
           }
         }
@@ -709,7 +709,7 @@ export function createExecTool(
         const raw = await callGatewayTool(
           "node.invoke",
           { timeoutMs: invokeTimeoutMs },
-          buildInvokeParams(false, null),
+          buildInvokeParams(routedByHostExecBins, null),
         );
         const payload =
           raw && typeof raw === "object" ? (raw as { payload?: unknown }).payload : undefined;
