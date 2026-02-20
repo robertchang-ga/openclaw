@@ -17,6 +17,8 @@ export interface SanitizedMounts {
   sanitizedDir: string;
   /** Target info for reverse-merging container config writes back to host (null if no config). */
   configSyncTarget: ConfigSyncTarget | null;
+  /** Absolute path to the config file inside the container (for OPENCLAW_CONFIG_PATH). */
+  containerConfigPath: string | null;
 }
 
 /**
@@ -24,8 +26,10 @@ export interface SanitizedMounts {
  * This is called BEFORE starting the Docker container.
  *
  * Mount Strategy:
+ * - Sanitized config directory mounted read-write (writeConfigFile needs to
+ *   create temp files in the same directory; a single-file bind mount would
+ *   fail with EACCES because Docker creates the parent dir as root)
  * - Sanitized auth-profiles.json files mounted read-only (individual files)
- * - Sanitized config file mounted read-only
  * - Conversations directories mounted read-write (need persistence)
  * - Workspace directories mounted read-write (need file access)
  *
@@ -51,10 +55,14 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
 
   const binds: string[] = [];
   let configSyncTarget: ConfigSyncTarget | null = null;
+  let containerConfigPath: string | null = null;
 
   // =========================================================================
-  // 1. SANITIZED CONFIG FILE (read-only)
+  // 1. SANITIZED CONFIG DIRECTORY (read-write)
   // =========================================================================
+  // We mount a DIRECTORY (not a single file) because writeConfigFile creates
+  // temp files (openclaw.json.<pid>.<uuid>.tmp) in the same directory. A single-
+  // file bind mount leaves the parent dir owned by root, blocking temp file creation.
   const configPath = resolveConfigPath();
   if (configPath && fs.existsSync(configPath)) {
     try {
@@ -66,14 +74,18 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
       const config = sanitizeConfigSecrets(rawConfig, { force: true });
 
       const ext = path.extname(configPath);
-      const sanitizedConfigPath = path.join(sanitizedDir, `openclaw${ext}`);
+      // Place in its own subdirectory so we can mount the directory writable.
+      const configSubDir = path.join(sanitizedDir, "config");
+      await fs.promises.mkdir(configSubDir, { recursive: true });
+      const sanitizedConfigPath = path.join(configSubDir, `openclaw${ext}`);
 
       await fs.promises.writeFile(sanitizedConfigPath, JSON.stringify(config, null, 2), "utf8");
 
-      // Mount writable so the container can persist config changes (agent config updates,
-      // skill installs, allowlist changes, etc.). A host-side watcher reverse-merges
-      // non-secret changes back to the real config file.
-      binds.push(`${sanitizedConfigPath}:/home/node/.openclaw/openclaw${ext}:rw`);
+      // Mount the entire config subdirectory writable. The container uses
+      // OPENCLAW_CONFIG_PATH to locate the config file inside this directory.
+      const containerConfigDir = "/home/node/.openclaw/.config";
+      containerConfigPath = `${containerConfigDir}/openclaw${ext}`;
+      binds.push(`${configSubDir}:${containerConfigDir}:rw`);
 
       configSyncTarget = {
         sanitizedPath: sanitizedConfigPath,
@@ -266,7 +278,7 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
     }
   }
 
-  return { binds, sanitizedDir, configSyncTarget };
+  return { binds, sanitizedDir, configSyncTarget, containerConfigPath };
 }
 
 /**

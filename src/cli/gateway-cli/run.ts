@@ -419,6 +419,11 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
         // Always set the embedded node host token so the message-handler bypass can match it.
         OPENCLAW_EMBEDDED_NODE_HOST_TOKEN: nodeHostAuthToken,
       };
+      // Point the container at the directory-mounted config file.
+      // We mount a directory (not a single file) so writeConfigFile can create temp files.
+      if (sanitizedMounts.containerConfigPath) {
+        containerEnv.OPENCLAW_CONFIG_PATH = sanitizedMounts.containerConfigPath;
+      }
       if (gatewayAuthToken) {
         containerEnv.OPENCLAW_GATEWAY_TOKEN = gatewayAuthToken;
       }
