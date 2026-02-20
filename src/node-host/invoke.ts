@@ -385,7 +385,9 @@ export async function handleInvoke(
   frame: NodeInvokeRequestPayload,
   client: GatewayClient,
   skillBins: SkillBinsProvider,
+  options?: { embedded?: boolean },
 ) {
+  const embedded = options?.embedded ?? false;
   const command = String(frame.command ?? "");
   if (command === "system.execApprovals.get") {
     try {
@@ -679,7 +681,7 @@ export async function handleInvoke(
     }
   }
 
-  if (security === "deny" && !hostExecBinsOverride) {
+  if (security === "deny" && !hostExecBinsOverride && !embedded) {
     await sendNodeEvent(
       client,
       "exec.denied",
@@ -710,7 +712,7 @@ export async function handleInvoke(
       ? params.approvalDecision
       : null;
   const approvedByAsk = approvalDecision !== null || params.approved === true;
-  if (requiresAsk && !approvedByAsk && !hostExecBinsOverride) {
+  if (requiresAsk && !approvedByAsk && !hostExecBinsOverride && !embedded) {
     await sendNodeEvent(
       client,
       "exec.denied",

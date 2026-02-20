@@ -1,4 +1,3 @@
-
 import { resolveBrowserConfig } from "../browser/config.js";
 import { loadConfig } from "../config/config.js";
 import { GatewayClient } from "../gateway/client.js";
@@ -105,8 +104,7 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
     if (nodeId !== config.nodeId) {
       config.nodeId = nodeId;
     }
-    displayName =
-      opts.displayName?.trim() || config.displayName || (await getMachineDisplayName());
+    displayName = opts.displayName?.trim() || config.displayName || (await getMachineDisplayName());
     config.displayName = displayName;
 
     const gateway: NodeHostGatewayConfig = {
@@ -120,8 +118,7 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
 
     const cfg = loadConfig();
     const resolvedBrowser = resolveBrowserConfig(cfg.browser, cfg);
-    browserProxyEnabled =
-      cfg.nodeHost?.browserProxy?.enabled !== false && resolvedBrowser.enabled;
+    browserProxyEnabled = cfg.nodeHost?.browserProxy?.enabled !== false && resolvedBrowser.enabled;
     const isRemoteMode = cfg.gateway?.mode === "remote";
     tls = gateway.tls ?? false;
     token =
@@ -173,7 +170,7 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
       if (!payload) {
         return;
       }
-      void handleInvoke(payload, client, skillBins);
+      void handleInvoke(payload, client, skillBins, { embedded: opts.embedded });
     },
     onConnectError: (err) => {
       // keep retrying (handled by GatewayClient)
