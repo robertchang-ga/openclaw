@@ -266,7 +266,7 @@ export const nodeHandlers: GatewayRequestHandlers = {
           pathEnv: live?.pathEnv,
           permissions: live?.permissions ?? paired?.permissions,
           connectedAtMs: live?.connectedAtMs,
-          paired: Boolean(paired),
+          paired: Boolean(paired) || Boolean(live),
           connected: Boolean(live),
         };
       });
@@ -336,7 +336,7 @@ export const nodeHandlers: GatewayRequestHandlers = {
           pathEnv: live?.pathEnv,
           permissions: live?.permissions,
           connectedAtMs: live?.connectedAtMs,
-          paired: Boolean(paired),
+          paired: Boolean(paired) || Boolean(live),
           connected: Boolean(live),
         },
         undefined,
