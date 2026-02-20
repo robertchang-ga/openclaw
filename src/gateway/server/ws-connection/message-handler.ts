@@ -385,6 +385,17 @@ export function attachGatewayWsMessageHandler(params: {
         const sharedAuthOk =
           sharedAuthResult?.ok === true &&
           (sharedAuthResult.method === "token" || sharedAuthResult.method === "password");
+
+        // Embedded node host bypass: the host-side launcher generates a per-session token
+        // (OPENCLAW_EMBEDDED_NODE_HOST_TOKEN) and passes it to both the container and the node
+        // host. When a role="node" client presents this token, it is trusted without device
+        // identity (it arrives via socat → internal Docker network, not the public internet).
+        const embeddedNodeHostEnvToken = process.env.OPENCLAW_EMBEDDED_NODE_HOST_TOKEN;
+        const isEmbeddedNodeHost =
+          Boolean(embeddedNodeHostEnvToken) &&
+          Boolean(connectParams.auth?.token) &&
+          connectParams.auth?.token === embeddedNodeHostEnvToken &&
+          role === "node";
         const rejectUnauthorized = (failedAuth: GatewayAuthResult) => {
           markHandshakeFailure("unauthorized", {
             authMode: resolvedAuth.mode,
@@ -421,7 +432,7 @@ export function attachGatewayWsMessageHandler(params: {
             scopes = [];
             connectParams.scopes = scopes;
           }
-          const canSkipDevice = sharedAuthOk;
+          const canSkipDevice = sharedAuthOk || isEmbeddedNodeHost;
 
           if (isControlUi && !allowControlUiBypass) {
             const errorMessage = "control ui requires HTTPS or localhost (secure context)";
@@ -612,7 +623,7 @@ export function attachGatewayWsMessageHandler(params: {
             }
           }
         }
-        if (!authOk) {
+        if (!authOk && !isEmbeddedNodeHost) {
           rejectUnauthorized(authResult);
           return;
         }

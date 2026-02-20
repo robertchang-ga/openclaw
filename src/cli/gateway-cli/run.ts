@@ -22,6 +22,7 @@ import { GatewayLockError } from "../../infra/gateway-lock.js";
 import { formatPortDiagnostics, inspectPortUsage } from "../../infra/ports.js";
 import { setConsoleSubsystemFilter, setConsoleTimestampPrefix } from "../../logging/console.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { startNodeHost } from "../../node-host/runner.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
   startGatewayContainer,
@@ -29,9 +30,8 @@ import {
   isGatewayContainerRunning,
   getGatewayContainerLogs,
 } from "../../security/gateway-container.js";
-import { startSecretsProxy, generateProxyAuthToken } from "../../security/secrets-proxy.js";
 import { loadProxyPort } from "../../security/secrets-proxy-allowlist.js";
-import { startNodeHost } from "../../node-host/runner.js";
+import { startSecretsProxy, generateProxyAuthToken } from "../../security/secrets-proxy.js";
 import { createSecretsRegistry } from "../../security/secrets-registry.js";
 import { formatCliCommand } from "../command-format.js";
 import { inheritOptionFromParent } from "../command-options.js";
@@ -394,9 +394,26 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
       const gatewayAuthToken = cfg.gateway?.auth?.token;
       const gatewayAuthPassword = cfg.gateway?.auth?.password;
 
+      // Per-session token for the embedded node host to authenticate with the container gateway.
+      // The node host connects via socat (172.18.0.1 from the container's view) and cannot use
+      // trusted-proxy or loopback bypass. Without a shared secret it would fail with
+      // "device identity required". We generate a session-unique fallback token and pass
+      // it to the container as OPENCLAW_EMBEDDED_NODE_HOST_TOKEN so the gateway message handler
+      // can grant it device-identity bypass for role="node" connections.
+      //
+      // Token priority for the node host auth:
+      //   1. gateway.auth.token from config (already accepted by the container gateway)
+      //   2. OPENCLAW_GATEWAY_TOKEN from the host env (the container inherits it via ...process.env)
+      //   3. Generated per-session fallback (requires the OPENCLAW_EMBEDDED_NODE_HOST_TOKEN bypass)
+      const envGatewayToken =
+        process.env.OPENCLAW_GATEWAY_TOKEN ?? process.env.CLAWDBOT_GATEWAY_TOKEN;
+      const nodeHostAuthToken = gatewayAuthToken ?? envGatewayToken ?? generateProxyAuthToken();
+
       const containerEnv: Record<string, string | undefined> = {
         ...process.env,
         PROXY_AUTH_TOKEN: proxyAuthToken,
+        // Always set the embedded node host token so the message-handler bypass can match it.
+        OPENCLAW_EMBEDDED_NODE_HOST_TOKEN: nodeHostAuthToken,
       };
       if (gatewayAuthToken) {
         containerEnv.OPENCLAW_GATEWAY_TOKEN = gatewayAuthToken;
@@ -460,7 +477,10 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
           gatewayPort: port,
           nodeId: "host-exec",
           displayName: "Secure Mode Host Exec",
-          token: gatewayAuthToken,
+          // Use the best available auth token. If the user has a gateway token configured
+          // the container already accepts it. If not, nodeHostAuthToken is the per-session
+          // fallback that the message-handler will accept via OPENCLAW_EMBEDDED_NODE_HOST_TOKEN.
+          token: nodeHostAuthToken,
           password: gatewayAuthPassword,
           embedded: true,
         });
@@ -519,7 +539,9 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
       const healthCheckLoop = async () => {
         while (!abortController.signal.aborted) {
           await new Promise((resolve) => setTimeout(resolve, 10000)); // Check every 10s
-          if (abortController.signal.aborted) break;
+          if (abortController.signal.aborted) {
+            break;
+          }
           const isRunning = await isGatewayContainerRunning();
           if (!isRunning) {
             gatewayLog.error("Gateway container stopped unexpectedly");

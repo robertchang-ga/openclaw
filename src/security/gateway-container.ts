@@ -1,5 +1,5 @@
-import process from "node:process";
 import { spawn, type ChildProcess } from "node:child_process";
+import process from "node:process";
 import { execDocker, dockerContainerState } from "../agents/sandbox/docker.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 
@@ -32,7 +32,9 @@ const RELAY_SOCKET_MOUNT = "/tmp/proxy.sock";
  * Idempotent — silently succeeds if the network already exists.
  */
 async function ensureSecureNetwork(): Promise<void> {
-  const result = await execDocker(["network", "inspect", SECURE_NETWORK_NAME], { allowFailure: true });
+  const result = await execDocker(["network", "inspect", SECURE_NETWORK_NAME], {
+    allowFailure: true,
+  });
   if (result.code === 0) {
     logger.debug(`Network ${SECURE_NETWORK_NAME} already exists`);
     return;
@@ -82,10 +84,14 @@ async function startRelayContainer(
   const network = SECURE_NETWORK_NAME;
 
   const args = [
-    "run", "-d",
-    "--name", RELAY_CONTAINER_NAME,
-    "--network", network,
-    "--restart", "unless-stopped",
+    "run",
+    "-d",
+    "--name",
+    RELAY_CONTAINER_NAME,
+    "--network",
+    network,
+    "--restart",
+    "unless-stopped",
   ];
 
   if (proxySocketPath) {
@@ -99,7 +105,8 @@ async function startRelayContainer(
   } else {
     // TCP mode (Windows): reach host via Docker Desktop's host.docker.internal
     args.push(
-      "--add-host", "host.docker.internal:host-gateway",
+      "--add-host",
+      "host.docker.internal:host-gateway",
       SOCAT_IMAGE,
       `TCP-LISTEN:${proxyPort},fork,reuseaddr`,
       `TCP:host.docker.internal:${hostProxyPort}`,
@@ -108,7 +115,9 @@ async function startRelayContainer(
 
   await execDocker(args);
 
-  const mode = proxySocketPath ? `socket:${proxySocketPath}` : `tcp:host.docker.internal:${hostProxyPort}`;
+  const mode = proxySocketPath
+    ? `socket:${proxySocketPath}`
+    : `tcp:host.docker.internal:${hostProxyPort}`;
   logger.info(`Relay container started: ${RELAY_CONTAINER_NAME} (${mode} → port ${proxyPort})`);
 }
 
@@ -163,13 +172,14 @@ async function getContainerIp(containerName: string, networkName: string): Promi
  * This allows the gateway port to be accessible on the host without putting the
  * container on the bridge network (which would give it outbound internet access).
  */
-function startSocatForwarder(hostPort: number, containerIp: string, containerPort: number): ChildProcess {
+function startSocatForwarder(
+  hostPort: number,
+  containerIp: string,
+  containerPort: number,
+): ChildProcess {
   const proc = spawn(
     "socat",
-    [
-      `TCP-LISTEN:${hostPort},bind=127.0.0.1,fork,reuseaddr`,
-      `TCP:${containerIp}:${containerPort}`,
-    ],
+    [`TCP-LISTEN:${hostPort},bind=127.0.0.1,fork,reuseaddr`, `TCP:${containerIp}:${containerPort}`],
     { stdio: "ignore", detached: false },
   );
   proc.on("error", (err) => {
@@ -200,7 +210,11 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
 
   // Set up network isolation: internal network + relay
   await ensureSecureNetwork();
-  await startRelayContainer(opts.proxyPort, opts.hostProxyPort ?? opts.proxyPort, opts.proxySocketPath);
+  await startRelayContainer(
+    opts.proxyPort,
+    opts.hostProxyPort ?? opts.proxyPort,
+    opts.proxySocketPath,
+  );
 
   const filteredEnv = filterSecretEnv(opts.env || process.env);
 
@@ -290,7 +304,9 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
   // access to 127.0.0.1 on the host side.
   args.push("node", "dist/index.js", "gateway", "--allow-unconfigured", "--bind", "lan");
 
-  logger.info(`Starting gateway container: ${GATEWAY_CONTAINER_NAME} (network: ${SECURE_NETWORK_NAME})`);
+  logger.info(
+    `Starting gateway container: ${GATEWAY_CONTAINER_NAME} (network: ${SECURE_NETWORK_NAME})`,
+  );
   await execDocker(args);
 
   // Get the container's IP on the internal network and start a host-side socat forwarder.
@@ -405,6 +421,7 @@ const ALLOWED_SECRET_ENV_VARS = new Set([
   "CLAWDBOT_GATEWAY_TOKEN", // Legacy alias
   "CLAWDBOT_GATEWAY_PASSWORD", // Legacy alias
   "PROXY_AUTH_TOKEN", // Proxy client auth (generated per-session)
+  "OPENCLAW_EMBEDDED_NODE_HOST_TOKEN", // Per-session token for embedded node host auth bypass
 ]);
 
 /**
