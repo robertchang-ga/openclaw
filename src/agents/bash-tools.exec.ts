@@ -355,14 +355,14 @@ export function createExecTool(
         host = "gateway";
       }
 
-      // hostExecBins: if the command's binary is in the hostExecBins list, force host=gateway.
+      // hostExecBins: if the command's binary is in the hostExecBins list, force host=node.
       // This is independent of security level and configured host — it's a hard routing gate.
-      // Binaries listed here are also implicitly authorized (skip the gateway allowlist/approval
-      // flow), since the user explicitly configured them as trusted host-exec binaries.
+      // Binaries listed here are also implicitly authorized (skip the approval flow),
+      // since the user explicitly configured them as trusted host-exec binaries.
       // We scan past common runner prefixes (run, npx, node, bun, pnpm, yarn, deno) so that
       // commands like `run mcporter` or `npx supabase` still match their intended binary.
       let routedByHostExecBins = false;
-      if (host !== "gateway") {
+      {
         const approvalsMeta = resolveExecApprovals(agentId);
         if (approvalsMeta.hostExecBins.size > 0) {
           const RUNNER_PREFIXES = new Set([
@@ -709,7 +709,7 @@ export function createExecTool(
         const raw = await callGatewayTool(
           "node.invoke",
           { timeoutMs: invokeTimeoutMs },
-          buildInvokeParams(routedByHostExecBins, null),
+          buildInvokeParams(false, null),
         );
         const payload =
           raw && typeof raw === "object" ? (raw as { payload?: unknown }).payload : undefined;

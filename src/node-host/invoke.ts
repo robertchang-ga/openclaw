@@ -536,6 +536,30 @@ export async function handleInvoke(
   const security = approvals.agent.security;
   const ask = approvals.agent.ask;
   const autoAllowSkills = approvals.agent.autoAllowSkills;
+
+  // hostExecBins: commands whose binary is in the hostExecBins list are pre-authorized
+  // by the user. Skip the approval flow entirely for these commands.
+  let hostExecBinsOverride = false;
+  if (approvals.hostExecBins.size > 0) {
+    const RUNNER_PREFIXES = new Set([
+      "run",
+      "npx",
+      "node",
+      "bun",
+      "pnpm",
+      "yarn",
+      "deno",
+      "tsx",
+      "ts-node",
+    ]);
+    const cmdTokens = (shellCommand || rawCommand || argv.join(" ")).trim().split(/\s+/);
+    const binToken =
+      cmdTokens.find((t) => !RUNNER_PREFIXES.has(t.toLowerCase())) ?? cmdTokens[0] ?? "";
+    const binBasename = binToken.includes("/") ? (binToken.split("/").pop() ?? binToken) : binToken;
+    if (approvals.hostExecBins.has(binBasename.toLowerCase())) {
+      hostExecBinsOverride = true;
+    }
+  }
   const sessionKey = params.sessionKey?.trim() || "node";
   const runId = params.runId?.trim() || crypto.randomUUID();
   const env = sanitizeEnv(params.env ?? undefined);
@@ -655,7 +679,7 @@ export async function handleInvoke(
     }
   }
 
-  if (security === "deny") {
+  if (security === "deny" && !hostExecBinsOverride) {
     await sendNodeEvent(
       client,
       "exec.denied",
@@ -686,7 +710,7 @@ export async function handleInvoke(
       ? params.approvalDecision
       : null;
   const approvedByAsk = approvalDecision !== null || params.approved === true;
-  if (requiresAsk && !approvedByAsk) {
+  if (requiresAsk && !approvedByAsk && !hostExecBinsOverride) {
     await sendNodeEvent(
       client,
       "exec.denied",
