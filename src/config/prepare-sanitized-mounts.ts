@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { ConfigSyncTarget } from "./config-sync-watcher.js";
 import { resolveConfigPath } from "./paths.js";
 import { sanitizeConfigSecrets } from "./sanitize-secrets.js";
 
@@ -14,6 +15,8 @@ export interface SanitizedMounts {
   binds: string[];
   /** Path to sanitized config directory */
   sanitizedDir: string;
+  /** Target info for reverse-merging container config writes back to host (null if no config). */
+  configSyncTarget: ConfigSyncTarget | null;
 }
 
 /**
@@ -47,6 +50,7 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
   await fs.promises.mkdir(sanitizedDir, { recursive: true });
 
   const binds: string[] = [];
+  let configSyncTarget: ConfigSyncTarget | null = null;
 
   // =========================================================================
   // 1. SANITIZED CONFIG FILE (read-only)
@@ -66,8 +70,15 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
 
       await fs.promises.writeFile(sanitizedConfigPath, JSON.stringify(config, null, 2), "utf8");
 
-      // Mount to expected container path (container runs as 'node' user)
-      binds.push(`${sanitizedConfigPath}:/home/node/.openclaw/openclaw${ext}:ro`);
+      // Mount writable so the container can persist config changes (agent config updates,
+      // skill installs, allowlist changes, etc.). A host-side watcher reverse-merges
+      // non-secret changes back to the real config file.
+      binds.push(`${sanitizedConfigPath}:/home/node/.openclaw/openclaw${ext}:rw`);
+
+      configSyncTarget = {
+        sanitizedPath: sanitizedConfigPath,
+        realPath: configPath,
+      };
     } catch (err) {
       throw new Error(`Failed to sanitize config: ${String(err)}`, { cause: err });
     }
@@ -255,7 +266,7 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
     }
   }
 
-  return { binds, sanitizedDir };
+  return { binds, sanitizedDir, configSyncTarget };
 }
 
 /**

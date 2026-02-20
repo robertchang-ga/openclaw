@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Command } from "commander";
+import {
+  startConfigSyncWatcher,
+  type ConfigSyncWatcher,
+} from "../../config/config-sync-watcher.js";
 import type { GatewayAuthMode } from "../../config/config.js";
 import {
   CONFIG_PATH,
@@ -467,6 +471,16 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
 
       gatewayLog.info("Gateway container is ready and healthy");
 
+      // Start config sync watcher to reverse-merge container config writes to host config.
+      let configSyncWatcherHandle: ConfigSyncWatcher | null = null;
+      if (sanitizedMounts.configSyncTarget) {
+        configSyncWatcherHandle = startConfigSyncWatcher(
+          sanitizedMounts.configSyncTarget,
+          gatewayLog,
+        );
+        gatewayLog.info("Config sync watcher started");
+      }
+
       // Start embedded node host for host-exec commands (hostExecBins).
       // This connects back to the gateway inside the container via the socat forwarder,
       // allowing agents to run commands on the physical host via host=node.
@@ -514,6 +528,15 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
             gatewayLog.info("Embedded node host stopped");
           } catch (err) {
             gatewayLog.error(`Error stopping embedded node host: ${String(err)}`);
+          }
+        }
+        // Stop config sync watcher
+        if (configSyncWatcherHandle) {
+          try {
+            configSyncWatcherHandle.stop();
+            gatewayLog.info("Config sync watcher stopped");
+          } catch (err) {
+            gatewayLog.error(`Error stopping config sync watcher: ${String(err)}`);
           }
         }
         // Cleanup sanitized mount files
