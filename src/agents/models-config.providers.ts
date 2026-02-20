@@ -74,6 +74,8 @@ function buildMinimaxTextModel(params: {
   return buildMinimaxModel({ ...params, input: ["text"] });
 }
 
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
 const XIAOMI_BASE_URL = "https://api.xiaomimimo.com/anthropic";
 export const XIAOMI_DEFAULT_MODEL_ID = "mimo-v2-flash";
 const XIAOMI_DEFAULT_CONTEXT_WINDOW = 262144;
@@ -510,6 +512,14 @@ function buildQwenPortalProvider(): ProviderConfig {
   };
 }
 
+function buildOpenRouterProvider(): ProviderConfig {
+  return {
+    baseUrl: OPENROUTER_BASE_URL,
+    api: "openai-completions",
+    models: [],
+  };
+}
+
 function buildSyntheticProvider(): ProviderConfig {
   return {
     baseUrl: SYNTHETIC_BASE_URL,
@@ -742,6 +752,13 @@ export async function resolveImplicitProviders(params: {
       models: [buildCloudflareAiGatewayModelDefinition()],
     };
     break;
+  }
+
+  const openrouterKey =
+    resolveEnvApiKeyVarName("openrouter") ??
+    resolveApiKeyFromProfiles({ provider: "openrouter", store: authStore });
+  if (openrouterKey) {
+    providers.openrouter = { ...buildOpenRouterProvider(), apiKey: openrouterKey };
   }
 
   // Ollama provider - only add if explicitly configured.

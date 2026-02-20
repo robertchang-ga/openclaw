@@ -77,13 +77,15 @@ export function resolveModel(
       return { model: forwardCompat, authStorage, modelRegistry };
     }
     const providerCfg = providers[provider];
-    if (providerCfg || modelId.startsWith("mock-")) {
+    const isOpenRouter = normalizedProvider === "openrouter";
+    if (providerCfg || modelId.startsWith("mock-") || isOpenRouter) {
       const fallbackModel: Model<Api> = normalizeModelCompat({
         id: modelId,
         name: modelId,
-        api: providerCfg?.api ?? "openai-responses",
+        api: providerCfg?.api ?? (isOpenRouter ? "openai-completions" : "openai-responses"),
         provider,
-        baseUrl: providerCfg?.baseUrl,
+        baseUrl:
+          providerCfg?.baseUrl ?? (isOpenRouter ? "https://openrouter.ai/api/v1" : undefined),
         reasoning: false,
         input: ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

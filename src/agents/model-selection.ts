@@ -395,9 +395,9 @@ export function buildAllowedModelSet(params: {
       allowedKeys.add(key);
     } else if (catalogKeys.has(key)) {
       allowedKeys.add(key);
-    } else if (configuredProviders[providerKey] != null) {
-      // Explicitly configured providers should be allowlist-able even when
-      // they don't exist in the curated model catalog.
+    } else if (configuredProviders[providerKey] != null || providerKey === "openrouter") {
+      // Explicitly configured providers (or implicit ones like openrouter)
+      // should be allowlist-able even when they don't exist in the curated model catalog.
       allowedKeys.add(key);
     }
   }
