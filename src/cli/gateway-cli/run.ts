@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import type { Command } from "commander";
 import {
@@ -484,21 +485,55 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
       // Start embedded node host for host-exec commands (hostExecBins).
       // This connects back to the gateway inside the container via the socat forwarder,
       // allowing agents to run commands on the physical host via host=node.
+      //
+      // Wait for the gateway WebSocket to accept connections first — the Docker
+      // health check only verifies the container is running, not that the gateway
+      // process inside is listening. Without this, the node host exhausts its
+      // backoff retries during the ~16s container startup delay.
       let nodeClient: Awaited<ReturnType<typeof startNodeHost>> | null = null;
       try {
-        nodeClient = await startNodeHost({
-          gatewayHost: "127.0.0.1",
-          gatewayPort: port,
-          nodeId: "host-exec",
-          displayName: "Secure Mode Host Exec",
-          // Use the best available auth token. If the user has a gateway token configured
-          // the container already accepts it. If not, nodeHostAuthToken is the per-session
-          // fallback that the message-handler will accept via OPENCLAW_EMBEDDED_NODE_HOST_TOKEN.
-          token: nodeHostAuthToken,
-          password: gatewayAuthPassword,
-          embedded: true,
-        });
-        gatewayLog.info("Embedded node host started (id: host-exec)");
+        const maxWaitMs = 60_000;
+        const probeIntervalMs = 1_000;
+        const deadline = Date.now() + maxWaitMs;
+        let gatewayReachable = false;
+
+        while (Date.now() < deadline) {
+          try {
+            await new Promise<void>((resolve, reject) => {
+              const sock = net.createConnection({ host: "127.0.0.1", port }, () => {
+                sock.destroy();
+                resolve();
+              });
+              sock.on("error", reject);
+              sock.setTimeout(probeIntervalMs, () => {
+                sock.destroy();
+                reject(new Error("timeout"));
+              });
+            });
+            gatewayReachable = true;
+            break;
+          } catch {
+            await new Promise((r) => setTimeout(r, probeIntervalMs));
+          }
+        }
+
+        if (!gatewayReachable) {
+          gatewayLog.error("Gateway socket not reachable after 60s — skipping node host");
+        } else {
+          nodeClient = await startNodeHost({
+            gatewayHost: "127.0.0.1",
+            gatewayPort: port,
+            nodeId: "host-exec",
+            displayName: "Secure Mode Host Exec",
+            // Use the best available auth token. If the user has a gateway token configured
+            // the container already accepts it. If not, nodeHostAuthToken is the per-session
+            // fallback that the message-handler will accept via OPENCLAW_EMBEDDED_NODE_HOST_TOKEN.
+            token: nodeHostAuthToken,
+            password: gatewayAuthPassword,
+            embedded: true,
+          });
+          gatewayLog.info("Embedded node host started (id: host-exec)");
+        }
       } catch (err) {
         gatewayLog.error(`Failed to start embedded node host: ${String(err)}`);
         // Non-fatal: secure mode still works, just without host exec
