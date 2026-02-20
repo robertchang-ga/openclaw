@@ -999,10 +999,29 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     );
 
     try {
-      await deps.fs.promises.writeFile(tmp, json, {
-        encoding: "utf-8",
-        mode: 0o600,
-      });
+      // Try writing the temp file in the same directory as the config (preferred
+      // for atomic rename). If the parent dir is not writable (e.g. Docker
+      // single-file bind mount with root-owned parent), fall back to os.tmpdir().
+      let tmpUsed = tmp;
+      try {
+        await deps.fs.promises.writeFile(tmp, json, {
+          encoding: "utf-8",
+          mode: 0o600,
+        });
+      } catch (writeErr) {
+        if ((writeErr as { code?: string }).code === "EACCES") {
+          tmpUsed = path.join(
+            os.tmpdir(),
+            `${path.basename(configPath)}.${process.pid}.${crypto.randomUUID()}.tmp`,
+          );
+          await deps.fs.promises.writeFile(tmpUsed, json, {
+            encoding: "utf-8",
+            mode: 0o600,
+          });
+        } else {
+          throw writeErr;
+        }
+      }
 
       if (deps.fs.existsSync(configPath)) {
         await rotateConfigBackups(configPath, deps.fs.promises);
@@ -1012,16 +1031,17 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       }
 
       try {
-        await deps.fs.promises.rename(tmp, configPath);
+        await deps.fs.promises.rename(tmpUsed, configPath);
       } catch (err) {
         const code = (err as { code?: string }).code;
         // Windows doesn't reliably support atomic replace via rename when dest exists.
-        if (code === "EPERM" || code === "EEXIST") {
-          await deps.fs.promises.copyFile(tmp, configPath);
+        // EXDEV: temp file is on a different filesystem (e.g. /tmp vs bind mount).
+        if (code === "EPERM" || code === "EEXIST" || code === "EXDEV") {
+          await deps.fs.promises.copyFile(tmpUsed, configPath);
           await deps.fs.promises.chmod(configPath, 0o600).catch(() => {
             // best-effort
           });
-          await deps.fs.promises.unlink(tmp).catch(() => {
+          await deps.fs.promises.unlink(tmpUsed).catch(() => {
             // best-effort
           });
           logConfigOverwrite();
@@ -1029,7 +1049,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
           await appendWriteAudit("copy-fallback");
           return;
         }
-        await deps.fs.promises.unlink(tmp).catch(() => {
+        await deps.fs.promises.unlink(tmpUsed).catch(() => {
           // best-effort
         });
         throw err;
