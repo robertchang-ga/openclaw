@@ -741,7 +741,7 @@ export async function handleInvoke(
     }
   }
 
-  if (security === "allowlist" && (!analysisOk || !allowlistSatisfied) && !approvedByAsk) {
+  if (security === "allowlist" && (!analysisOk || !allowlistSatisfied) && !approvedByAsk && !hostExecBinsOverride && !embedded) {
     await sendNodeEvent(
       client,
       "exec.denied",
