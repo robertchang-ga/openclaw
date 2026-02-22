@@ -965,22 +965,24 @@ export async function resolveImplicitProviders(params: {
   // google-antigravity: discover models from live API when OAuth is configured.
   // Discovered models are merged with the SDK's built-in catalog, so new API
   // models appear automatically without forward-compat entries.
-  if (hasAntigravityProfiles(params.agentDir)) {
-    try {
-      const discoveredModels = await discoverAntigravityModels({
-        agentDir: params.agentDir,
-      });
-      if (discoveredModels.length > 0) {
-        providers["google-antigravity"] = {
-          baseUrl: "https://daily-cloudcode-pa.sandbox.googleapis.com",
-          api: "google-gemini-cli" as ProviderConfig["api"],
-          models: discoveredModels,
-        };
-      }
-    } catch {
-      // Discovery is best-effort; don't block provider resolution.
-    }
-  }
+  // TODO: Re-enable once we add a timeout around resolveAntigravityToken to
+  // prevent hangs inside containers where OAuth refresh / keychain access can block.
+  // if (hasAntigravityProfiles(params.agentDir)) {
+  //   try {
+  //     const discoveredModels = await discoverAntigravityModels({
+  //       agentDir: params.agentDir,
+  //     });
+  //     if (discoveredModels.length > 0) {
+  //       providers["google-antigravity"] = {
+  //         baseUrl: "https://daily-cloudcode-pa.sandbox.googleapis.com",
+  //         api: "google-gemini-cli" as ProviderConfig["api"],
+  //         models: discoveredModels,
+  //       };
+  //     }
+  //   } catch {
+  //     // Discovery is best-effort; don't block provider resolution.
+  //   }
+  // }
 
   return providers;
 }
