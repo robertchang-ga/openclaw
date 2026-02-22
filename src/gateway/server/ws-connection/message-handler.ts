@@ -421,7 +421,14 @@ export function attachGatewayWsMessageHandler(params: {
         };
         const handleMissingDeviceIdentity = (): boolean => {
           if (!device) {
-            clearUnboundScopes();
+            // Preserve scopes for operators with shared-secret auth — they are
+            // trusted to declare their own scopes.  Only strip self-declared
+            // scopes when we have *no* authenticated identity to bind them to.
+            const sharedAuthPreservesScopes =
+              role === "operator" && sharedAuthOk;
+            if (!sharedAuthPreservesScopes) {
+              clearUnboundScopes();
+            }
           }
 
           // Embedded node host bypass: the host-side launcher generates a per-session token
