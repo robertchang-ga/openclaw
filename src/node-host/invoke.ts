@@ -588,22 +588,32 @@ export async function handleInvoke(
   // via e.g. `mcporter ; cat /etc/passwd`. Chained/piped commands produce multiple segments
   // and are handled by the normal allowlist/approval flow instead.
   let hostExecBinsOverride = false;
+  let hostExecBinsDenied = false;
+  let hostExecBinsDeniedReason = "";
   if (approvals.hostExecBins.size > 0 && analysisOk && segments.length === 1) {
     const binToken = segments[0]?.resolution?.executableName?.toLowerCase() || "";
     const binRule = binToken ? approvals.hostExecBins.get(binToken) : undefined;
-    if (binRule && isHostExecBinAllowed(binRule, segments[0]?.argv ?? [])) {
-      hostExecBinsOverride = true;
-      await sendNodeEvent(
-        client,
-        "exec.hostExecBins",
-        buildExecEventPayload({
-          sessionKey,
-          runId,
-          host: "node",
-          command: cmdText,
-          reason: `hostExecBins:${binToken}`,
-        }),
-      );
+    if (binRule) {
+      if (isHostExecBinAllowed(binRule, segments[0]?.argv ?? [])) {
+        hostExecBinsOverride = true;
+        await sendNodeEvent(
+          client,
+          "exec.hostExecBins",
+          buildExecEventPayload({
+            sessionKey,
+            runId,
+            host: "node",
+            command: cmdText,
+            reason: `hostExecBins:${binToken}`,
+          }),
+        );
+      } else {
+        // Binary matches but subcommand is denied — hard deny regardless of
+        // which tool sent the command (exec or nodes run). This prevents a
+        // denied subcommand from falling through to the general allowlist.
+        hostExecBinsDenied = true;
+        hostExecBinsDeniedReason = `hostExecBins:${binToken}:subcommand-denied`;
+      }
     }
   }
 
@@ -683,6 +693,33 @@ export async function handleInvoke(
       });
       return;
     }
+  }
+
+  // ── Hard deny: hostExecBins subcommand denied ──────────────────────────────
+  // If the binary matches a hostExecBins entry but the subcommand is denied,
+  // block immediately. This is a universal gate — it fires regardless of which
+  // tool sent the command (exec, nodes run, etc.) and cannot be overridden by
+  // the general allowlist or approval flow.
+  if (hostExecBinsDenied) {
+    await sendNodeEvent(
+      client,
+      "exec.denied",
+      buildExecEventPayload({
+        sessionKey,
+        runId,
+        host: "node",
+        command: cmdText,
+        reason: hostExecBinsDeniedReason,
+      }),
+    );
+    await sendInvokeResult(client, frame, {
+      ok: false,
+      error: {
+        code: "UNAVAILABLE",
+        message: `SYSTEM_RUN_DENIED: ${hostExecBinsDeniedReason}`,
+      },
+    });
+    return;
   }
 
   if (security === "deny" && !hostExecBinsOverride) {
