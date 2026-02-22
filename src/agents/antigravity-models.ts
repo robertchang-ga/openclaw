@@ -133,6 +133,18 @@ function buildModelDefinition(modelId: string): ModelDefinitionConfig {
   };
 }
 
+const TOKEN_TIMEOUT_MS = 5_000;
+
+/**
+ * Race a promise against a timeout; resolves to `null` if the timeout fires first.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
 /**
  * Discover Antigravity models from the live API.
  *
@@ -145,7 +157,7 @@ export async function discoverAntigravityModels(params?: {
   agentDir?: string;
 }): Promise<ModelDefinitionConfig[]> {
   try {
-    const token = await resolveAntigravityToken(params?.agentDir);
+    const token = await withTimeout(resolveAntigravityToken(params?.agentDir), TOKEN_TIMEOUT_MS);
     if (!token) {
       log.debug("No OAuth token available for google-antigravity; skipping discovery.");
       return [];
