@@ -9,6 +9,7 @@ import {
   type ExecApprovalsFile,
   addAllowlistEntry,
   evaluateShellAllowlist,
+  isHostExecBinAllowed,
   maxAsk,
   minSecurity,
   requiresExecApproval,
@@ -427,7 +428,8 @@ export function createExecTool(
           });
           if (analysis.analysisOk && analysis.segments.length === 1) {
             const binToken = analysis.segments[0]?.resolution?.executableName?.toLowerCase() || "";
-            if (binToken && approvalsMeta.hostExecBins.has(binToken)) {
+            const binRule = binToken ? approvalsMeta.hostExecBins.get(binToken) : undefined;
+            if (binRule && isHostExecBinAllowed(binRule, analysis.segments[0]?.argv ?? [])) {
               host = "node";
               routedByHostExecBins = true;
             }

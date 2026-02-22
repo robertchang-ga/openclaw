@@ -53,6 +53,25 @@ export type ExecApprovalsAgent = ExecApprovalsDefaults & {
   allowlist?: ExecAllowlistEntry[];
 };
 
+/**
+ * Structured hostExecBins entry with optional subcommand filtering.
+ * If both `allow` and `deny` are set, `allow` wins (safer / more restrictive).
+ */
+export type HostExecBinEntry = {
+  bin: string;
+  allow?: string[];
+  deny?: string[];
+};
+
+/** Resolved rule for a single hostExecBin entry. */
+export type HostExecBinRule = {
+  allow: Set<string> | null; // null = no filter (all allowed)
+  deny: Set<string> | null;  // null = no filter (none denied)
+};
+
+/** Resolved map of bin name → subcommand rule. */
+export type HostExecBinsResolved = Map<string, HostExecBinRule>;
+
 export type ExecApprovalsFile = {
   version: 1;
   socket?: {
@@ -61,7 +80,7 @@ export type ExecApprovalsFile = {
   };
   defaults?: ExecApprovalsDefaults;
   agents?: Record<string, ExecApprovalsAgent>;
-  hostExecBins?: string[];
+  hostExecBins?: (string | HostExecBinEntry)[];
 };
 
 export type ExecApprovalsSnapshot = {
@@ -79,7 +98,7 @@ export type ExecApprovalsResolved = {
   defaults: Required<ExecApprovalsDefaults>;
   agent: Required<ExecApprovalsDefaults>;
   allowlist: ExecAllowlistEntry[];
-  hostExecBins: Set<string>;
+  hostExecBins: HostExecBinsResolved;
   file: ExecApprovalsFile;
 };
 
@@ -228,8 +247,21 @@ export function normalizeExecApprovals(file: ExecApprovalsFile): ExecApprovalsFi
   }
   const hostExecBins = Array.isArray(file.hostExecBins)
     ? file.hostExecBins
-        .map((b) => (typeof b === "string" ? b.trim().toLowerCase() : ""))
-        .filter(Boolean)
+        .map((b): string | HostExecBinEntry | null => {
+          if (typeof b === "string") {
+            const trimmed = b.trim().toLowerCase();
+            return trimmed || null;
+          }
+          if (b && typeof b === "object" && typeof b.bin === "string") {
+            return {
+              bin: b.bin.trim().toLowerCase(),
+              allow: Array.isArray(b.allow) ? b.allow.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean) : undefined,
+              deny: Array.isArray(b.deny) ? b.deny.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean) : undefined,
+            };
+          }
+          return null;
+        })
+        .filter((b): b is string | HostExecBinEntry => b !== null && (typeof b === "string" || Boolean((b as HostExecBinEntry).bin)))
     : undefined;
   const normalized: ExecApprovalsFile = {
     version: 1,
@@ -432,11 +464,26 @@ export function resolveExecApprovalsFromFile(params: {
     ...(Array.isArray(wildcard.allowlist) ? wildcard.allowlist : []),
     ...(Array.isArray(agent.allowlist) ? agent.allowlist : []),
   ];
-  const hostExecBins = new Set<string>(
-    (Array.isArray(file.hostExecBins) ? file.hostExecBins : [])
-      .map((b) => (typeof b === "string" ? b.trim().toLowerCase() : ""))
-      .filter(Boolean),
-  );
+  const hostExecBins: HostExecBinsResolved = new Map();
+  for (const entry of Array.isArray(file.hostExecBins) ? file.hostExecBins : []) {
+    if (typeof entry === "string") {
+      const bin = entry.trim().toLowerCase();
+      if (bin) {
+        hostExecBins.set(bin, { allow: null, deny: null });
+      }
+    } else if (entry && typeof entry === "object" && typeof entry.bin === "string") {
+      const bin = entry.bin.trim().toLowerCase();
+      if (!bin) continue;
+      // If both allow and deny are set, allow wins (safer / more restrictive).
+      const allow = Array.isArray(entry.allow) && entry.allow.length > 0
+        ? new Set(entry.allow.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean))
+        : null;
+      const deny = !allow && Array.isArray(entry.deny) && entry.deny.length > 0
+        ? new Set(entry.deny.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean))
+        : null;
+      hostExecBins.set(bin, { allow, deny });
+    }
+  }
   return {
     path: params.path ?? resolveExecApprovalsPath(),
     socketPath: expandHome(
@@ -556,4 +603,45 @@ export async function requestExecApprovalViaSocket(params: {
       return undefined;
     },
   });
+}
+
+/**
+ * Extract the subcommand from argv by stripping flags.
+ * Flags are tokens starting with `-`. The subcommand is the first
+ * positional argument after the binary name (argv[0]).
+ * Returns "" if there's no subcommand (bare invocation).
+ *
+ * Examples:
+ *   ["mcporter", "pair"]             → "pair"
+ *   ["mcporter", "--verbose", "pair"] → "pair"
+ *   ["mcporter", "-v", "--debug", "status", "all"] → "status"
+ *   ["mcporter"]                      → ""
+ */
+export function resolveHostExecBinSubcommand(argv: string[]): string {
+  // Skip argv[0] (binary name), find first non-flag token.
+  for (let i = 1; i < argv.length; i++) {
+    const token = argv[i];
+    if (!token.startsWith("-")) {
+      return token.toLowerCase();
+    }
+  }
+  return "";
+}
+
+/**
+ * Check whether a command is allowed by a hostExecBins rule,
+ * considering subcommand allow/deny filtering.
+ */
+export function isHostExecBinAllowed(
+  rule: HostExecBinRule,
+  argv: string[],
+): boolean {
+  const subcmd = resolveHostExecBinSubcommand(argv);
+  if (rule.allow) {
+    return rule.allow.has(subcmd);
+  }
+  if (rule.deny) {
+    return !rule.deny.has(subcmd);
+  }
+  return true; // no filter → all subcommands allowed
 }

@@ -10,6 +10,7 @@ import {
   analyzeArgvCommand,
   evaluateExecAllowlist,
   evaluateShellAllowlist,
+  isHostExecBinAllowed,
   requiresExecApproval,
   normalizeExecApprovals,
   mergeExecApprovalsSocketDefaults,
@@ -589,7 +590,8 @@ export async function handleInvoke(
   let hostExecBinsOverride = false;
   if (approvals.hostExecBins.size > 0 && analysisOk && segments.length === 1) {
     const binToken = segments[0]?.resolution?.executableName?.toLowerCase() || "";
-    if (binToken && approvals.hostExecBins.has(binToken)) {
+    const binRule = binToken ? approvals.hostExecBins.get(binToken) : undefined;
+    if (binRule && isHostExecBinAllowed(binRule, segments[0]?.argv ?? [])) {
       hostExecBinsOverride = true;
       await sendNodeEvent(
         client,
