@@ -707,7 +707,11 @@ export function createExecTool(
         const raw = await callGatewayTool(
           "node.invoke",
           { timeoutMs: invokeTimeoutMs },
-          buildInvokeParams(routedByHostExecBins, null),
+          // hostExecBins-routed commands do NOT set `approved` here — the gateway
+          // would reject it (approval override requires a registered runId).
+          // Instead, invoke.ts on the node-host independently detects the
+          // hostExecBins match and sets hostExecBinsOverride=true.
+          buildInvokeParams(false, null),
         );
         const payload =
           raw && typeof raw === "object" ? (raw as { payload?: unknown }).payload : undefined;
