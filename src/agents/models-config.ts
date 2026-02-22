@@ -138,7 +138,16 @@ export async function ensureOpenClawModelsJson(
     return { agentDir, wrote: false };
   }
 
-  await fs.mkdir(agentDir, { recursive: true, mode: 0o700 });
-  await fs.writeFile(targetPath, next, { mode: 0o600 });
+  try {
+    await fs.mkdir(agentDir, { recursive: true, mode: 0o700 });
+    await fs.writeFile(targetPath, next, { mode: 0o600 });
+  } catch (err: unknown) {
+    // Container or read-only environments may deny writes — degrade gracefully.
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === "EACCES" || code === "EPERM" || code === "EROFS") {
+      return { agentDir, wrote: false };
+    }
+    throw err;
+  }
   return { agentDir, wrote: true };
 }
