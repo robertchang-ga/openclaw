@@ -887,7 +887,17 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     }
 
     const dir = path.dirname(configPath);
-    await deps.fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+    // mkdir is best-effort: in Docker single-file bind mounts, the parent dir may
+    // be root-owned and the gateway runs as a non-root user. The file itself is
+    // writable even if mkdir fails, so suppress EACCES/EROFS here.
+    try {
+      await deps.fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+    } catch (mkdirErr) {
+      const code = (mkdirErr as { code?: string }).code;
+      if (code !== "EACCES" && code !== "EROFS" && code !== "EEXIST") {
+        throw mkdirErr;
+      }
+    }
     const outputConfig =
       envRefMap && changedPaths
         ? (restoreEnvRefsFromMap(cfgToWrite, "", envRefMap, changedPaths) as OpenClawConfig)
@@ -1024,10 +1034,15 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       }
 
       if (deps.fs.existsSync(configPath)) {
-        await rotateConfigBackups(configPath, deps.fs.promises);
-        await deps.fs.promises.copyFile(configPath, `${configPath}.bak`).catch(() => {
-          // best-effort
-        });
+        // Backup operations are best-effort: in Docker bind-mount scenarios, the parent
+        // dir may be read-only, preventing .bak file creation. The write itself still
+        // succeeds via the /tmp fallback → copyFile path.
+        try {
+          await rotateConfigBackups(configPath, deps.fs.promises);
+          await deps.fs.promises.copyFile(configPath, `${configPath}.bak`);
+        } catch {
+          // best-effort: parent dir may not be writable
+        }
       }
 
       try {

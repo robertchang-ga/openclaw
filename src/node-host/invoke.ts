@@ -539,7 +539,6 @@ export async function handleInvoke(
   const ask = approvals.agent.ask;
   const autoAllowSkills = approvals.agent.autoAllowSkills;
 
-
   const sessionKey = params.sessionKey?.trim() || "node";
   const runId = params.runId?.trim() || crypto.randomUUID();
   const env = sanitizeEnv(params.env ?? undefined);
@@ -583,12 +582,26 @@ export async function handleInvoke(
   }
 
   // hostExecBins: commands whose binary is in the hostExecBins list are pre-authorized
-  // by the user. Skip the approval flow for simple commands (no pipes/chaining).
+  // by the user. Skip the approval flow for simple commands only.
+  // We require segments.length === 1 (no pipes or chaining) to prevent shell injection
+  // via e.g. `mcporter ; cat /etc/passwd`. Chained/piped commands produce multiple segments
+  // and are handled by the normal allowlist/approval flow instead.
   let hostExecBinsOverride = false;
   if (approvals.hostExecBins.size > 0 && analysisOk && segments.length === 1) {
     const binToken = segments[0]?.resolution?.executableName?.toLowerCase() || "";
     if (binToken && approvals.hostExecBins.has(binToken)) {
       hostExecBinsOverride = true;
+      await sendNodeEvent(
+        client,
+        "exec.hostExecBins",
+        buildExecEventPayload({
+          sessionKey,
+          runId,
+          host: "node",
+          command: cmdText,
+          reason: `hostExecBins:${binToken}`,
+        }),
+      );
     }
   }
 

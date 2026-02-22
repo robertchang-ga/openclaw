@@ -411,6 +411,11 @@ export function createExecTool(
       // Binaries listed here are also implicitly authorized (skip the approval flow),
       // since the user explicitly configured them as trusted host-exec binaries.
       // We only allow this routing for simple commands (no pipes or chaining) to prevent bypasses.
+      //
+      // NOTE: We intentionally omit cwd/env to avoid resolving the binary against the
+      // *agent's* filesystem. The command will execute on the node-host which has a
+      // different PATH. Without cwd/env, executableName falls back to the raw basename
+      // from the first token, which is exactly what we need for the routing decision.
       {
         const approvalsMeta = resolveExecApprovals(agentId);
         if (approvalsMeta.hostExecBins.size > 0) {
@@ -418,8 +423,6 @@ export function createExecTool(
             command: params.command,
             allowlist: [],
             safeBins: new Set(),
-            cwd: workdir,
-            env,
             platform: process.platform,
           });
           if (analysis.analysisOk && analysis.segments.length === 1) {
@@ -430,11 +433,6 @@ export function createExecTool(
             }
           }
         }
-      }
- 
-      if (routedByHostExecBins) {
-        security = "full";
-        ask = "off";
       }
 
       if (!sandbox && host === "gateway" && !params.env?.PATH) {
