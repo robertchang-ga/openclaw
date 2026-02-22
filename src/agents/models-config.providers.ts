@@ -44,6 +44,7 @@ import {
   buildTogetherModelDefinition,
 } from "./together-models.js";
 import { discoverVeniceModels, VENICE_BASE_URL } from "./venice-models.js";
+import { discoverAntigravityModels, hasAntigravityProfiles } from "./antigravity-models.js";
 
 type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 export type ProviderConfig = NonNullable<ModelsConfig["providers"]>[string];
@@ -89,7 +90,6 @@ function buildMinimaxTextModel(params: {
   return buildMinimaxModel({ ...params, input: ["text"] });
 }
 
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 const XIAOMI_BASE_URL = "https://api.xiaomimimo.com/anthropic";
 export const XIAOMI_DEFAULT_MODEL_ID = "mimo-v2-flash";
@@ -891,12 +891,6 @@ export async function resolveImplicitProviders(params: {
     break;
   }
 
-  const openrouterKey =
-    resolveEnvApiKeyVarName("openrouter") ??
-    resolveApiKeyFromProfiles({ provider: "openrouter", store: authStore });
-  if (openrouterKey) {
-    providers.openrouter = { ...buildOpenRouterProvider(), apiKey: openrouterKey };
-  }
 
   // Ollama provider - only add if explicitly configured.
   // Use the user's configured baseUrl (from explicit providers) for model
@@ -966,6 +960,26 @@ export async function resolveImplicitProviders(params: {
     resolveApiKeyFromProfiles({ provider: "nvidia", store: authStore });
   if (nvidiaKey) {
     providers.nvidia = { ...buildNvidiaProvider(), apiKey: nvidiaKey };
+  }
+
+  // google-antigravity: discover models from live API when OAuth is configured.
+  // Discovered models are merged with the SDK's built-in catalog, so new API
+  // models appear automatically without forward-compat entries.
+  if (hasAntigravityProfiles(params.agentDir)) {
+    try {
+      const discoveredModels = await discoverAntigravityModels({
+        agentDir: params.agentDir,
+      });
+      if (discoveredModels.length > 0) {
+        providers["google-antigravity"] = {
+          baseUrl: "https://daily-cloudcode-pa.sandbox.googleapis.com",
+          api: "google-gemini-cli" as ProviderConfig["api"],
+          models: discoveredModels,
+        };
+      }
+    } catch {
+      // Discovery is best-effort; don't block provider resolution.
+    }
   }
 
   return providers;

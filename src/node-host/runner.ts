@@ -170,7 +170,7 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
       if (!payload) {
         return;
       }
-      void handleInvoke(payload, client, skillBins, { embedded: opts.embedded });
+      void handleInvoke(payload, client, skillBins);
     },
     onConnectError: (err) => {
       // keep retrying (handled by GatewayClient)

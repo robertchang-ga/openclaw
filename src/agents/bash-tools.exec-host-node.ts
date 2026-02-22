@@ -39,19 +39,27 @@ export type ExecuteNodeHostCommandParams = {
   warnings: string[];
   notifySessionKey?: string;
   trustedSafeBinDirs?: ReadonlySet<string>;
+  /** When true, the command was routed here by a hostExecBins match. Approvals are bypassed. */
+  routedByHostExecBins?: boolean;
 };
 
 export async function executeNodeHostCommand(
   params: ExecuteNodeHostCommandParams,
 ): Promise<AgentToolResult<ExecToolDetails>> {
-  const approvals = resolveExecApprovals(params.agentId, {
-    security: params.security,
-    ask: params.ask,
-  });
-  const hostSecurity = minSecurity(params.security, approvals.agent.security);
-  const hostAsk = maxAsk(params.ask, approvals.agent.ask);
-  const askFallback = approvals.agent.askFallback;
-  if (hostSecurity === "deny") {
+  const approvals = params.routedByHostExecBins
+    ? null
+    : resolveExecApprovals(params.agentId, {
+        security: params.security,
+        ask: params.ask,
+      });
+  const hostSecurity = params.routedByHostExecBins
+    ? ("full" as ExecSecurity)
+    : minSecurity(params.security, approvals!.agent.security);
+  const hostAsk = params.routedByHostExecBins
+    ? ("off" as ExecAsk)
+    : maxAsk(params.ask, approvals!.agent.ask);
+  const askFallback = params.routedByHostExecBins ? undefined : approvals!.agent.askFallback;
+  if (!params.routedByHostExecBins && hostSecurity === "deny") {
     throw new Error("exec denied: host=node security=deny");
   }
   if (params.boundNode && params.requestedNode && params.boundNode !== params.requestedNode) {

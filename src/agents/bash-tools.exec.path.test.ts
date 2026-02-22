@@ -33,7 +33,7 @@ vi.mock("../infra/exec-approvals.js", async (importOriginal) => {
       autoAllowSkills: false,
     },
     allowlist: [],
-    hostExecBins: new Set<string>(),
+    hostExecBins: new Map(),
     file: {
       version: 1,
       socket: { path: "/tmp/exec-approvals.sock", token: "token" },

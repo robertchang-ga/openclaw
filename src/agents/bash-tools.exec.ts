@@ -1,7 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { type ExecHost, maxAsk, minSecurity } from "../infra/exec-approvals.js";
+import {
+  type ExecHost,
+  evaluateShellAllowlist,
+  isHostExecBinAllowed,
+  maxAsk,
+  minSecurity,
+  resolveExecApprovals as resolveExecApprovalsForRouting,
+} from "../infra/exec-approvals.js";
 import { resolveExecSafeBinRuntimePolicy } from "../infra/exec-safe-bin-runtime-policy.js";
 import {
   getShellPathFromLoginShell,
@@ -303,6 +310,7 @@ export function createExecTool(
       const sandboxHostConfigured = defaults?.host === "sandbox";
       const requestedHost = normalizeExecHost(params.host) ?? null;
       let host: ExecHost = requestedHost ?? configuredHost;
+      let routedByHostExecBins = false;
       if (!elevatedRequested && requestedHost && requestedHost !== configuredHost) {
         throw new Error(
           `exec host not allowed (requested ${renderExecHostLabel(requestedHost)}; ` +
@@ -374,6 +382,36 @@ export function createExecTool(
           })
         : mergedEnv;
 
+      // hostExecBins: if the command's binary is in the hostExecBins list, force host=node.
+      // This is independent of security level and configured host — it's a hard routing gate.
+      // Binaries listed here are also implicitly authorized (skip the approval flow),
+      // since the user explicitly configured them as trusted host-exec binaries.
+      // We only allow this routing for simple commands (no pipes or chaining) to prevent bypasses.
+      //
+      // NOTE: We intentionally omit cwd/env to avoid resolving the binary against the
+      // *agent's* filesystem. The command will execute on the node-host which has a
+      // different PATH. Without cwd/env, executableName falls back to the raw basename
+      // from the first token, which is exactly what we need for the routing decision.
+      {
+        const approvalsMeta = resolveExecApprovalsForRouting(agentId);
+        if (approvalsMeta.hostExecBins.size > 0) {
+          const analysis = evaluateShellAllowlist({
+            command: params.command,
+            allowlist: [],
+            safeBins: new Set(),
+            platform: process.platform,
+          });
+          if (analysis.analysisOk && analysis.segments.length === 1) {
+            const binToken = analysis.segments[0]?.resolution?.executableName?.toLowerCase() || "";
+            const binRule = binToken ? approvalsMeta.hostExecBins.get(binToken) : undefined;
+            if (binRule && isHostExecBinAllowed(binRule, analysis.segments[0]?.argv ?? [])) {
+              host = "node";
+              routedByHostExecBins = true;
+            }
+          }
+        }
+      }
+
       if (!sandbox && host === "gateway" && !params.env?.PATH) {
         const shellPath = getShellPathFromLoginShell({
           env: process.env,
@@ -410,6 +448,7 @@ export function createExecTool(
           warnings,
           notifySessionKey,
           trustedSafeBinDirs,
+          routedByHostExecBins,
         });
       }
 
