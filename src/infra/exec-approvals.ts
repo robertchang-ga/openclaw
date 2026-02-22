@@ -606,42 +606,79 @@ export async function requestExecApprovalViaSocket(params: {
 }
 
 /**
- * Extract the subcommand from argv by stripping flags.
- * Flags are tokens starting with `-`. The subcommand is the first
- * positional argument after the binary name (argv[0]).
- * Returns "" if there's no subcommand (bare invocation).
+ * Extract positional arguments from argv by stripping flags.
+ * Flags are tokens starting with `-`. Returns all non-flag tokens
+ * after the binary name (argv[0]), lowercased.
  *
  * Examples:
- *   ["mcporter", "pair"]             → "pair"
- *   ["mcporter", "--verbose", "pair"] → "pair"
- *   ["mcporter", "-v", "--debug", "status", "all"] → "status"
- *   ["mcporter"]                      → ""
+ *   ["gog", "gmail", "send"]                    → ["gmail", "send"]
+ *   ["gog", "--verbose", "gmail", "send"]        → ["gmail", "send"]
+ *   ["gog", "gmail", "drafts", "send", "--to"]   → ["gmail", "drafts", "send"]
+ *   ["mcporter", "-v", "--debug", "pair"]         → ["pair"]
+ *   ["mcporter"]                                  → []
  */
-export function resolveHostExecBinSubcommand(argv: string[]): string {
-  // Skip argv[0] (binary name), find first non-flag token.
+export function resolveHostExecBinSubcommandPath(argv: string[]): string[] {
+  const positionals: string[] = [];
+  // Skip argv[0] (binary name), collect non-flag tokens.
   for (let i = 1; i < argv.length; i++) {
     const token = argv[i];
     if (!token.startsWith("-")) {
-      return token.toLowerCase();
+      positionals.push(token.toLowerCase());
     }
   }
-  return "";
+  return positionals;
+}
+
+/** @deprecated Use resolveHostExecBinSubcommandPath instead. */
+export function resolveHostExecBinSubcommand(argv: string[]): string {
+  const path = resolveHostExecBinSubcommandPath(argv);
+  return path[0] ?? "";
 }
 
 /**
  * Check whether a command is allowed by a hostExecBins rule,
  * considering subcommand allow/deny filtering.
+ *
+ * Allow/deny entries support multi-level subcommand paths separated
+ * by spaces (e.g. "gmail send"). Matching is prefix-based: an entry
+ * "gmail send" matches commands "gog gmail send", "gog gmail send --to foo",
+ * etc. An entry "gmail" matches all gmail subcommands.
+ *
+ * Examples with deny: ["gmail send", "gmail drafts send"]:
+ *   gog gmail send           → denied (prefix match "gmail send")
+ *   gog gmail drafts send    → denied (prefix match "gmail drafts send")
+ *   gog gmail drafts list    → allowed
+ *   gog gmail read           → allowed
+ *   gog calendar list        → allowed
  */
 export function isHostExecBinAllowed(
   rule: HostExecBinRule,
   argv: string[],
 ): boolean {
-  const subcmd = resolveHostExecBinSubcommand(argv);
+  const positionals = resolveHostExecBinSubcommandPath(argv);
   if (rule.allow) {
-    return rule.allow.has(subcmd);
+    return matchesSubcommandSet(rule.allow, positionals);
   }
   if (rule.deny) {
-    return !rule.deny.has(subcmd);
+    return !matchesSubcommandSet(rule.deny, positionals);
   }
   return true; // no filter → all subcommands allowed
+}
+
+/**
+ * Check if any entry in the set is a prefix of the positional args.
+ * Entries are space-separated subcommand paths (e.g. "gmail send").
+ */
+function matchesSubcommandSet(
+  entries: Set<string>,
+  positionals: string[],
+): boolean {
+  const joined = positionals.join(" ");
+  for (const entry of entries) {
+    // Exact match or prefix match (entry is a prefix of the positionals)
+    if (joined === entry || joined.startsWith(entry + " ")) {
+      return true;
+    }
+  }
+  return false;
 }
