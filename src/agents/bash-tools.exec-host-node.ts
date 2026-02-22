@@ -163,7 +163,10 @@ export async function executeNodeHostCommand(
       params: {
         command: argv,
         rawCommand: params.command,
-        cwd: params.workdir,
+        // When routed by hostExecBins, the agent's workdir is a container-internal path
+        // (e.g. /home/node/.openclaw/workspace) that doesn't exist on the host machine.
+        // Omit cwd so the node host uses its own default, avoiding spawn ENOENT.
+        cwd: params.routedByHostExecBins ? undefined : params.workdir,
         env: nodeEnv,
         timeoutMs: typeof params.timeoutSec === "number" ? params.timeoutSec * 1000 : undefined,
         agentId: params.agentId,
