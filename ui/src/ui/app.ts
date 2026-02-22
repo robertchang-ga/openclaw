@@ -48,6 +48,7 @@ import {
   resetToolStream as resetToolStreamInternal,
   type ToolStreamEntry,
   type CompactionStatus,
+  type FallbackStatus,
 } from "./app-tool-stream.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import { normalizeAssistantIdentity } from "./assistant-identity.ts";
@@ -121,6 +122,7 @@ export class OpenClawApp extends LitElement {
   @state() themeResolved: ResolvedTheme = "dark";
   @state() hello: GatewayHelloOk | null = null;
   @state() lastError: string | null = null;
+  @state() lastErrorCode: string | null = null;
   @state() eventLog: EventLogEntry[] = [];
   private eventLogBuffer: EventLogEntry[] = [];
   private toolStreamSyncTimer: number | null = null;
@@ -140,6 +142,7 @@ export class OpenClawApp extends LitElement {
   @state() chatStreamStartedAt: number | null = null;
   @state() chatRunId: string | null = null;
   @state() compactionStatus: CompactionStatus | null = null;
+  @state() fallbackStatus: FallbackStatus | null = null;
   @state() chatAvatarUrl: string | null = null;
   @state() chatThinkingLevel: string | null = null;
   @state() chatQueue: ChatQueueItem[] = [];
@@ -299,6 +302,8 @@ export class OpenClawApp extends LitElement {
   @state() cronRunsJobId: string | null = null;
   @state() cronRuns: CronRunLogEntry[] = [];
   @state() cronBusy = false;
+
+  @state() updateAvailable: import("./types.js").UpdateAvailable | null = null;
 
   @state() skillsLoading = false;
   @state() skillsReport: SkillStatusReport | null = null;

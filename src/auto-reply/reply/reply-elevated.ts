@@ -3,6 +3,7 @@ import { getChannelDock } from "../../channels/dock.js";
 import { normalizeChannelId } from "../../channels/plugins/index.js";
 import { CHAT_CHANNEL_ORDER } from "../../channels/registry.js";
 import type { AgentElevatedAllowFromConfig, OpenClawConfig } from "../../config/config.js";
+import { normalizeAtHashSlug } from "../../shared/string-normalization.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import type { MsgContext } from "../templating.js";
 export { formatElevatedUnavailableMessage } from "./elevated-unavailable.js";
@@ -15,17 +16,7 @@ function normalizeAllowToken(value?: string) {
 }
 
 function slugAllowToken(value?: string) {
-  if (!value) {
-    return "";
-  }
-  let text = value.trim().toLowerCase();
-  if (!text) {
-    return "";
-  }
-  text = text.replace(/^[@#]+/, "");
-  text = text.replace(/[\s_]+/g, "-");
-  text = text.replace(/[^a-z0-9-]+/g, "-");
-  return text.replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "");
+  return normalizeAtHashSlug(value);
 }
 
 const SENDER_PREFIXES = [
@@ -106,8 +97,6 @@ function isApprovedElevatedSender(params: {
   addToken(params.ctx.SenderE164);
   addToken(params.ctx.From);
   addToken(stripSenderPrefix(params.ctx.From));
-  addToken(params.ctx.To);
-  addToken(stripSenderPrefix(params.ctx.To));
 
   for (const rawEntry of allowTokens) {
     const entry = rawEntry.trim();

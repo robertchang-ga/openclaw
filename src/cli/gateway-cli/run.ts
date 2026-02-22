@@ -6,7 +6,7 @@ import {
   startConfigSyncWatcher,
   type ConfigSyncWatcher,
 } from "../../config/config-sync-watcher.js";
-import type { GatewayAuthMode } from "../../config/config.js";
+import type { GatewayAuthMode, GatewayTailscaleMode } from "../../config/config.js";
 import {
   CONFIG_PATH,
   loadConfig,
@@ -213,7 +213,7 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     return;
   }
   const tailscaleRaw = toOptionString(opts.tailscale);
-  const tailscaleMode =
+  const tailscaleMode: GatewayTailscaleMode | null =
     tailscaleRaw === "off" || tailscaleRaw === "serve" || tailscaleRaw === "funnel"
       ? tailscaleRaw
       : null;
@@ -259,14 +259,17 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
   }
 
   const miskeys = extractGatewayMiskeys(snapshot?.parsed);
-  const authConfig = {
-    ...cfg.gateway?.auth,
-    ...(authMode ? { mode: authMode } : {}),
-    ...(passwordRaw ? { password: passwordRaw } : {}),
-    ...(tokenRaw ? { token: tokenRaw } : {}),
-  };
+  const authOverride =
+    authMode || passwordRaw || tokenRaw || authModeRaw
+      ? {
+          ...(authMode ? { mode: authMode } : {}),
+          ...(tokenRaw ? { token: tokenRaw } : {}),
+          ...(passwordRaw ? { password: passwordRaw } : {}),
+        }
+      : undefined;
   const resolvedAuth = resolveGatewayAuth({
-    authConfig,
+    authConfig: cfg.gateway?.auth,
+    authOverride,
     env: process.env,
     tailscaleMode: tailscaleMode ?? cfg.gateway?.tailscale?.mode ?? "off",
   });
@@ -277,6 +280,7 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
   const hasPassword = typeof passwordValue === "string" && passwordValue.trim().length > 0;
   const hasSharedSecret =
     (resolvedAuthMode === "token" && hasToken) || (resolvedAuthMode === "password" && hasPassword);
+  const canBootstrapToken = resolvedAuthMode === "token" && !hasToken;
   const authHints: string[] = [];
   if (miskeys.hasGatewayToken) {
     authHints.push('Found "gateway.token" in config. Use "gateway.auth.token" instead.');
@@ -285,19 +289,6 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     authHints.push(
       '"gateway.remote.token" is for remote CLI calls; it does not enable local gateway auth.',
     );
-  }
-  if (resolvedAuthMode === "token" && !hasToken && !resolvedAuth.allowTailscale) {
-    defaultRuntime.error(
-      [
-        "Gateway auth is set to token, but no token is configured.",
-        "Set gateway.auth.token (or OPENCLAW_GATEWAY_TOKEN), or pass --token.",
-        ...authHints,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
-    defaultRuntime.exit(1);
-    return;
   }
   if (resolvedAuthMode === "password" && !hasPassword) {
     defaultRuntime.error(
@@ -312,7 +303,17 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     defaultRuntime.exit(1);
     return;
   }
-  if (bind !== "loopback" && !hasSharedSecret && resolvedAuthMode !== "trusted-proxy") {
+  if (resolvedAuthMode === "none") {
+    gatewayLog.warn(
+      "Gateway auth mode=none explicitly configured; all gateway connections are unauthenticated.",
+    );
+  }
+  if (
+    bind !== "loopback" &&
+    !hasSharedSecret &&
+    !canBootstrapToken &&
+    resolvedAuthMode !== "trusted-proxy"
+  ) {
     defaultRuntime.error(
       [
         `Refusing to bind gateway to ${bind} without auth.`,
@@ -325,6 +326,13 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     defaultRuntime.exit(1);
     return;
   }
+  const tailscaleOverride =
+    tailscaleMode || opts.tailscaleResetOnExit
+      ? {
+          ...(tailscaleMode ? { mode: tailscaleMode } : {}),
+          ...(opts.tailscaleResetOnExit ? { resetOnExit: true } : {}),
+        }
+      : undefined;
 
   try {
     if (opts.secure) {
@@ -624,21 +632,8 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
       start: async () =>
         await startGatewayServer(port, {
           bind,
-          auth:
-            authMode || passwordRaw || tokenRaw || authModeRaw
-              ? {
-                  mode: authMode ?? undefined,
-                  token: tokenRaw,
-                  password: passwordRaw,
-                }
-              : undefined,
-          tailscale:
-            tailscaleMode || opts.tailscaleResetOnExit
-              ? {
-                  mode: tailscaleMode ?? undefined,
-                  resetOnExit: Boolean(opts.tailscaleResetOnExit),
-                }
-              : undefined,
+          auth: authOverride,
+          tailscale: tailscaleOverride,
         }),
     });
   } catch (err) {
