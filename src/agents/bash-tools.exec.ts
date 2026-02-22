@@ -355,40 +355,7 @@ export function createExecTool(
         host = "gateway";
       }
 
-      // hostExecBins: if the command's binary is in the hostExecBins list, force host=node.
-      // This is independent of security level and configured host — it's a hard routing gate.
-      // Binaries listed here are also implicitly authorized (skip the approval flow),
-      // since the user explicitly configured them as trusted host-exec binaries.
-      // We scan past common runner prefixes (run, npx, node, bun, pnpm, yarn, deno) so that
-      // commands like `run mcporter` or `npx supabase` still match their intended binary.
       let routedByHostExecBins = false;
-      {
-        const approvalsMeta = resolveExecApprovals(agentId);
-        if (approvalsMeta.hostExecBins.size > 0) {
-          const RUNNER_PREFIXES = new Set([
-            "run",
-            "npx",
-            "node",
-            "bun",
-            "pnpm",
-            "yarn",
-            "deno",
-            "tsx",
-            "ts-node",
-          ]);
-          const tokens = params.command.trim().split(/\s+/);
-          // Find the first token that isn't a known runner prefix
-          const binToken =
-            tokens.find((t) => !RUNNER_PREFIXES.has(t.toLowerCase())) ?? tokens[0] ?? "";
-          const binBasename = binToken.includes("/")
-            ? (binToken.split("/").pop() ?? binToken)
-            : binToken;
-          if (approvalsMeta.hostExecBins.has(binBasename.toLowerCase())) {
-            host = "node";
-            routedByHostExecBins = true;
-          }
-        }
-      }
 
       const configuredSecurity = defaults?.security ?? (host === "sandbox" ? "deny" : "allowlist");
       const requestedSecurity = normalizeExecSecurity(params.security);
@@ -438,6 +405,37 @@ export function createExecTool(
             containerWorkdir: containerWorkdir ?? sandbox.containerWorkdir,
           })
         : mergedEnv;
+ 
+      // hostExecBins: if the command's binary is in the hostExecBins list, force host=node.
+      // This is independent of security level and configured host — it's a hard routing gate.
+      // Binaries listed here are also implicitly authorized (skip the approval flow),
+      // since the user explicitly configured them as trusted host-exec binaries.
+      // We only allow this routing for simple commands (no pipes or chaining) to prevent bypasses.
+      {
+        const approvalsMeta = resolveExecApprovals(agentId);
+        if (approvalsMeta.hostExecBins.size > 0) {
+          const analysis = evaluateShellAllowlist({
+            command: params.command,
+            allowlist: [],
+            safeBins: new Set(),
+            cwd: workdir,
+            env,
+            platform: process.platform,
+          });
+          if (analysis.analysisOk && analysis.segments.length === 1) {
+            const binToken = analysis.segments[0]?.resolution?.executableName?.toLowerCase() || "";
+            if (binToken && approvalsMeta.hostExecBins.has(binToken)) {
+              host = "node";
+              routedByHostExecBins = true;
+            }
+          }
+        }
+      }
+ 
+      if (routedByHostExecBins) {
+        security = "full";
+        ask = "off";
+      }
 
       if (!sandbox && host === "gateway" && !params.env?.PATH) {
         const shellPath = getShellPathFromLoginShell({
