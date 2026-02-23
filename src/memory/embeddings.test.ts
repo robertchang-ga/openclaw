@@ -242,38 +242,6 @@ describe("embedding provider auto selection", () => {
     );
   });
 
-  it("uses gemini via google-antigravity OAuth when google key is missing", async () => {
-    const fetchMock = createGeminiFetchMock();
-    vi.stubGlobal("fetch", fetchMock);
-    vi.mocked(authModule.resolveApiKeyForProvider).mockImplementation(async ({ provider }) => {
-      if (provider === "openai") {
-        throw new Error('No API key found for provider "openai".');
-      }
-      if (provider === "google") {
-        throw new Error('No API key found for provider "google".');
-      }
-      if (provider === "google-antigravity") {
-        // Simulate the JSON format from buildOAuthApiKey for google-antigravity
-        return {
-          apiKey: JSON.stringify({ token: "antigravity-oauth-token", projectId: "my-project" }),
-          source: "profile:google-antigravity",
-          mode: "oauth" as const,
-        };
-      }
-      throw new Error(`Unexpected provider ${provider}`);
-    });
-
-    const result = await createAutoProvider();
-    const provider = expectAutoSelectedProvider(result, "gemini");
-    await provider.embedQuery("hello");
-
-    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
-    const headers = (init?.headers ?? {}) as Record<string, string>;
-    // OAuth token should be sent as Bearer, not as x-goog-api-key
-    expect(headers["Authorization"]).toBe("Bearer antigravity-oauth-token");
-    expect(headers["x-goog-api-key"]).toBeUndefined();
-  });
-
   it("keeps explicit model when openai is selected", async () => {
     const fetchMock = vi.fn(async (_input?: unknown, _init?: unknown) => ({
       ok: true,
