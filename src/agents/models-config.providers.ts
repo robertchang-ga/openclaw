@@ -975,6 +975,7 @@ export async function resolveImplicitProviders(params: {
           baseUrl: "https://daily-cloudcode-pa.sandbox.googleapis.com",
           api: "google-gemini-cli" as ProviderConfig["api"],
           models: discoveredModels,
+          apiKey: "antigravity-oauth",
         };
       }
     } catch {
