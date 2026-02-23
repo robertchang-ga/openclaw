@@ -278,6 +278,16 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
     }
   }
 
+  // =========================================================================
+  // 8. EXTENSIONS DIRECTORY (read-only) - installed plugins
+  // =========================================================================
+  // Plugins installed via `openclaw plugins install` live here.
+  // Contains only plugin code (JS/TS, manifests) — no secrets.
+  const extensionsDir = path.join(openclawDir, "extensions");
+  if (fs.existsSync(extensionsDir)) {
+    binds.push(`${extensionsDir}:/home/node/.openclaw/extensions:ro`);
+  }
+
   return { binds, sanitizedDir, configSyncTarget };
 }
 
