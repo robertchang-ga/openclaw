@@ -147,6 +147,35 @@ export async function createGeminiEmbeddingProvider(
   };
 }
 
+/**
+ * Try to resolve a Google API key, falling back to google-antigravity OAuth
+ * credentials when no plain `google` key is configured.
+ */
+async function resolveGoogleApiKey(
+  options: EmbeddingProviderOptions,
+): Promise<Awaited<ReturnType<typeof resolveApiKeyForProvider>>> {
+  try {
+    return await resolveApiKeyForProvider({
+      provider: "google",
+      cfg: options.config,
+      agentDir: options.agentDir,
+    });
+  } catch (err) {
+    // Only fall back when the error is a missing-key error, not a network or
+    // configuration error, to avoid masking real problems.
+    const message = err instanceof Error ? err.message : String(err);
+    const isMissingKey = /no api key found/i.test(message);
+    if (!isMissingKey) {
+      throw err;
+    }
+    return resolveApiKeyForProvider({
+      provider: "google-antigravity",
+      cfg: options.config,
+      agentDir: options.agentDir,
+    });
+  }
+}
+
 export async function resolveGeminiEmbeddingClient(
   options: EmbeddingProviderOptions,
 ): Promise<GeminiEmbeddingClient> {
@@ -156,14 +185,7 @@ export async function resolveGeminiEmbeddingClient(
 
   const apiKey = remoteApiKey
     ? remoteApiKey
-    : requireApiKey(
-        await resolveApiKeyForProvider({
-          provider: "google",
-          cfg: options.config,
-          agentDir: options.agentDir,
-        }),
-        "google",
-      );
+    : requireApiKey(await resolveGoogleApiKey(options), "google");
 
   const providerConfig = options.config.models?.providers?.google;
   const rawBaseUrl = remoteBaseUrl || providerConfig?.baseUrl?.trim() || DEFAULT_GEMINI_BASE_URL;
