@@ -17,7 +17,9 @@ const originalFetch = globalThis.fetch;
 /** Returns true only for valid 127.0.0.0/8 IPv4 addresses (octets 0-255). */
 function isLoopbackIPv4(hostname: string): boolean {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
-  if (!m) return false;
+  if (!m) {
+    return false;
+  }
   const octets = [+m[1], +m[2], +m[3], +m[4]];
   return octets[0] === 127 && octets.every((o) => o >= 0 && o <= 255);
 }
@@ -120,10 +122,17 @@ async function secureFetch(input: RequestInfo | URL, init?: RequestInit): Promis
     headers.set("X-Proxy-Token", proxyAuthToken);
   }
 
-  // Route through proxy, preserving all request details
-  // Spread init first, then override with proxy-specific fields
+  // Route through proxy, preserving all request details.
+  // IMPORTANT: strip `dispatcher` from init — undici's pinned-DNS dispatcher
+  // (injected by fetchWithSsrFGuard) would bypass the proxy entirely by opening
+  // a direct TCP connection to the original target host. The proxy request must
+  // use the default dispatcher so it routes to the relay container instead.
+  const { dispatcher: _dispatcher, ...initWithoutDispatcher } = (init ?? {}) as Record<
+    string,
+    unknown
+  >;
   return originalFetch(PROXY_URL, {
-    ...init,
+    ...initWithoutDispatcher,
     method,
     headers,
     body,
