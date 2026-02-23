@@ -52,6 +52,7 @@ services:
       - "127.0.0.1:${COGNEE_PORT:-8000}:8000"
     environment:
       - LLM_API_KEY=${LLM_API_KEY}
+      - GEMINI_API_KEY=${LLM_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
