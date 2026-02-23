@@ -185,7 +185,17 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
   }
 
   // =========================================================================
-  // 3. WORKSPACE DIRECTORIES (read-write)
+  // 3. GLOBAL MEMORY INDEX (read-write)
+  // =========================================================================
+  // The memory search SQLite index lives at ~/.openclaw/memory/{agentId}.sqlite.
+  // This is distinct from per-agent memory dirs (already mounted above).
+  // Must be writable so the container gateway can create/update the index.
+  const memoryIndexDir = path.join(openclawDir, "memory");
+  await fs.promises.mkdir(memoryIndexDir, { recursive: true });
+  binds.push(`${memoryIndexDir}:/home/node/.openclaw/memory:rw`);
+
+  // =========================================================================
+  // 4. WORKSPACE DIRECTORIES (read-write)
   // =========================================================================
   const workspaceDir = path.join(openclawDir, "workspace");
   await fs.promises.mkdir(workspaceDir, { recursive: true });
