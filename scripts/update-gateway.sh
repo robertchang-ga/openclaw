@@ -22,4 +22,7 @@ npm install -g .
 echo "==> Restarting openclaw-gateway service..."
 sudo systemctl restart openclaw-gateway
 
-echo "==> Done! Gateway restarted."
+echo "==> Restarting Cognee service..."
+docker compose up cognee -d --force-recreate
+
+echo "==> Done! Gateway and Cognee restarted."
