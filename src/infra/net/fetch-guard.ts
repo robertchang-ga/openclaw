@@ -134,12 +134,18 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
 
     let dispatcher: Dispatcher | null = null;
     try {
-      const pinned = await resolvePinnedHostnameWithPolicy(parsedUrl.hostname, {
-        lookupFn: params.lookupFn,
-        policy: params.policy,
-      });
-      if (params.pinDns !== false) {
-        dispatcher = createPinnedDispatcher(pinned);
+      // In secure mode (PROXY_URL set), the container has no outbound DNS access.
+      // Skip DNS pinning entirely — the host-side secrets proxy handles DNS
+      // resolution and SSRF protection on the other side of the network boundary.
+      const inSecureMode = Boolean(process.env.PROXY_URL);
+      if (!inSecureMode) {
+        const pinned = await resolvePinnedHostnameWithPolicy(parsedUrl.hostname, {
+          lookupFn: params.lookupFn,
+          policy: params.policy,
+        });
+        if (params.pinDns !== false) {
+          dispatcher = createPinnedDispatcher(pinned);
+        }
       }
 
       const init: RequestInit & { dispatcher?: Dispatcher } = {
