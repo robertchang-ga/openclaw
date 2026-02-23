@@ -44,3 +44,27 @@ services:
     tty: true
     init: true
     entrypoint: ["node", "dist/index.js"]
+
+  cognee:
+    image: cognee/cognee:latest
+    container_name: cognee
+    ports:
+      - "127.0.0.1:${COGNEE_PORT:-8000}:8000"
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      - ENABLE_BACKEND_ACCESS_CONTROL=false
+    volumes:
+      - cognee_data:/app/cognee/.cognee_system
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  cognee_data:
+    driver: local
