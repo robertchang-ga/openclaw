@@ -71,6 +71,7 @@ export const DEFAULT_ALLOWED_DOMAINS = [
   "api.telegram.org",
   "discord.com",
   "discord.gg",
+  "discord.media",
   "api.pluralkit.me",
   // Slack
   "slack.com",

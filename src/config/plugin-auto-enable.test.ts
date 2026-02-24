@@ -12,7 +12,7 @@ describe("applyPluginAutoEnable", () => {
     });
 
     expect(result.config.channels?.slack?.enabled).toBe(true);
-    expect(result.config.plugins?.entries?.slack).toBeUndefined();
+    expect(result.config.plugins?.entries?.slack?.enabled).toBe(true);
     expect(result.config.plugins?.allow).toEqual(["telegram", "slack"]);
     expect(result.changes.join("\n")).toContain("Slack configured, enabled automatically.");
   });

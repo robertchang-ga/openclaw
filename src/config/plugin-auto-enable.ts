@@ -411,6 +411,16 @@ function registerPluginEntry(cfg: OpenClawConfig, pluginId: string): OpenClawCon
       existing && typeof existing === "object" && !Array.isArray(existing)
         ? (existing as Record<string, unknown>)
         : {};
+    // Set both channels.<id>.enabled (channel-level) and plugins.entries.<id>.enabled
+    // (plugin-level).  The plugin loader's resolveEnableState checks the latter;
+    // without it bundled channel plugins are silently disabled as "disabled by default".
+    const pluginEntries = {
+      ...cfg.plugins?.entries,
+      [builtInChannelId]: {
+        ...(cfg.plugins?.entries?.[builtInChannelId] as Record<string, unknown> | undefined),
+        enabled: true,
+      },
+    };
     return {
       ...cfg,
       channels: {
@@ -419,6 +429,10 @@ function registerPluginEntry(cfg: OpenClawConfig, pluginId: string): OpenClawCon
           ...existingRecord,
           enabled: true,
         },
+      },
+      plugins: {
+        ...cfg.plugins,
+        entries: pluginEntries,
       },
     };
   }
