@@ -73,7 +73,7 @@ services:
     image: ghcr.io/speaches-ai/speaches:latest-cuda
     container_name: speaches
     ports:
-      - "127.0.0.1:${SPEACHES_PORT:-8090}:8090"
+      - "127.0.0.1:${SPEACHES_PORT:-8090}:8000"
     environment:
       - WHISPER__MODEL=${SPEACHES_MODEL:-Systran/faster-distil-whisper-large-v3}
     deploy:
@@ -87,7 +87,7 @@ services:
       - speaches_models:/root/.cache/huggingface
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
