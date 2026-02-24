@@ -264,8 +264,11 @@ async function transcribeAudio(params: {
       providerRegistry,
       config: audioConfig,
     });
+    const attempts = result.decision.attachments?.flatMap((a) =>
+      a.attempts.map((t) => `${t.provider ?? t.type ?? "?"}:${t.outcome}${t.reason ? `(${t.reason})` : ""}`),
+    );
     logger.info(
-      `transcribe: decision=${result.decision.outcome}, outputs=${result.outputs.length}`,
+      `transcribe: decision=${result.decision.outcome}, outputs=${result.outputs.length}, attempts=[${attempts?.join(", ") ?? "none"}]`,
     );
     const output = result.outputs.find((entry) => entry.kind === "audio.transcription");
     const text = output?.text?.trim();
