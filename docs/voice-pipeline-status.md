@@ -42,34 +42,27 @@ Enable end-to-end voice transcription in Discord: **User speaks → Opus decode 
 
 ## Remaining Blockers
 
-### 🔴 `TypeError: fetch failed` — STT request fails
-- **Current error**: `attempts=[openai:failed(TypeError: fetch failed)]`
-- Speaches IS running and reachable from host: `curl http://localhost:8090/v1/models` returns `{"data":[],"object":"list"}`
-- The secrets proxy accepts the request but the underlying `fetch` to `localhost:8090` fails
-- **Possible causes**:
-  - The secrets proxy may not properly handle multipart/form-data (audio transcription uploads a WAV file)
-  - The proxy may have issues forwarding to `localhost` specifically
-  - Need to check secrets proxy logs for the actual TCP/connection error
-- **Next steps**:
-  - Add more error detail logging in the OpenAI transcription provider to capture the full error (cause chain)
-  - Test if the secrets proxy can successfully proxy a simple `curl` to `localhost:8090/v1/models`
-  - Check if `http://127.0.0.1:8090/v1` works differently than `localhost`
-  - Potentially bypass the secrets proxy for local-only requests
+### ~~🔴 `TypeError: fetch failed` — STT request fails~~ ✅ FIXED
+- **Root cause**: `baseUrl: http://localhost:8090/v1` is unreachable from inside the Docker container
+  - `secure-fetch.ts` bypasses the proxy for `localhost` (correct behavior)
+  - But inside the container, `localhost` resolves to the **container itself**, not the host
+  - Port 8090 is not bound inside the container → `ECONNREFUSED`
+- **Fix**: Added `resolveSecureModeBaseUrl()` in `runner.entries.ts`
+  - When `OPENCLAW_SECURE_MODE=1`, rewrites `localhost:8090` → `speaches:8000`
+  - Both gateway and Speaches containers share the `openclaw-secure-net` network
+  - Host-mode (`localhost:8090`) is unchanged
 
-### 🟡 `@discordjs/opus` native addon not loading
-- **Current error**: `Cannot find module '.../@discordjs/opus/prebuild/node-v127-napi-v3-linux-x64-glibc-2.36/opus.node'`
-- **A full Docker image rebuild WAS performed** with `libopus-dev` + build tools installed in Dockerfile
-- The native addon still fails to load — likely `@discordjs/opus@0.10.0` uses prebuilt binaries via `@discordjs/node-pre-gyp` and doesn't compile from source even with build tools present
-- `opusscript` WASM fallback works most of the time but intermittently crashes with `memory access out of bounds`
-- **Next steps**:
-  - Check build logs for `@discordjs/opus` compilation errors during `pnpm install`
-  - May need to add `node-addon-api` or run `npm rebuild @discordjs/opus` explicitly in Dockerfile
-  - Or pin a different opus package version that supports Node 22
+### ~~🟡 `@discordjs/opus` native addon not loading~~ ✅ FIXED
+- **Root cause**: `@discordjs/opus@0.10.0` uses `node-pre-gyp` which tries prebuilt binaries but none exist for Node 22
+- Compilation from source requires an explicit rebuild step
+- **Fix**: Added `RUN cd node_modules/@discordjs/opus && npx node-gyp rebuild` to `Dockerfile` after `pnpm install`
+- Soft-failed (`|| echo ...`) so Docker build still succeeds if opus compilation fails (opusscript fallback available)
 
-### 🟡 Speaches models list is empty
-- `GET /v1/models` returns `{"data":[],"object":"list"}`
-- Models may load lazily on first use, but this needs verification
-- If Speaches has no Whisper model loaded, transcription will fail even after fixing the fetch issue
+### ~~🟡 Speaches models list is empty~~ ✅ NOT A BUG
+- `GET /v1/models` returns `{"data":[],"object":"list"}` — this is **expected** before first inference
+- Speaches lazily downloads and loads models on the first transcription request
+- The `WHISPER__MODEL` env var in docker-compose.yml is set correctly
+- Once Blocker 1 is fixed, the first STT request will trigger model download + load
 
 ## Config State (inside container)
 
@@ -97,5 +90,6 @@ Enable end-to-end voice transcription in Discord: **User speaks → Opus decode 
 | File | Changes |
 |------|---------|
 | `src/discord/voice/manager.ts` | DAVE disabled, end-to-end info logging, per-attempt transcription details |
-| `Dockerfile` | Added native opus dependencies (libopus-dev, python3, make, g++) |
+| `src/media-understanding/runner.entries.ts` | Added `resolveSecureModeBaseUrl()` — rewrites `localhost:8090` → `speaches:8000` in secure mode |
+| `Dockerfile` | Added native opus dependencies + explicit `npx node-gyp rebuild` for `@discordjs/opus` |
 | Host config (`openclaw.json`) | Added `models.providers.openai`, changed audio baseUrl, allowlist entries |

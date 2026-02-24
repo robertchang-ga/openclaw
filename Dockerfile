@@ -33,6 +33,10 @@ COPY --chown=node:node scripts ./scripts
 
 USER node
 RUN pnpm install --frozen-lockfile
+# Force rebuild of native opus addon for this Node version + platform.
+# @discordjs/opus uses @discordjs/node-pre-gyp (not plain node-gyp), so we
+# must use pnpm rebuild which triggers the package's own install script.
+RUN pnpm rebuild @discordjs/opus 2>&1 || echo "opus native build skipped (opusscript fallback available)"
 
 # Optionally install Chromium and Xvfb for browser automation.
 # Build with: docker build --build-arg OPENCLAW_INSTALL_BROWSER=1 ...

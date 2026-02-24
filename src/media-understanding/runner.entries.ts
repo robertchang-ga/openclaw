@@ -36,6 +36,33 @@ import type {
 } from "./types.js";
 import { estimateBase64Size, resolveVideoMaxBase64Bytes } from "./video.js";
 
+/**
+ * In Docker secure mode (`OPENCLAW_SECURE_MODE=1`), the config-level baseUrl
+ * `http://localhost:8090/v1` is unreachable because `localhost` inside the
+ * container refers to the container itself, not the host.
+ *
+ * Both the gateway container and the Speaches container are on the shared
+ * `openclaw-secure-net` Docker network, so the gateway can reach Speaches
+ * directly at `speaches:8000` (the container-internal port).
+ */
+export function resolveSecureModeBaseUrl(baseUrl: string | undefined): string | undefined {
+  if (!baseUrl || !process.env.OPENCLAW_SECURE_MODE) return baseUrl;
+  try {
+    const parsed = new URL(baseUrl);
+    if (
+      (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") &&
+      parsed.port === "8090"
+    ) {
+      parsed.hostname = "speaches";
+      parsed.port = "8000";
+      return parsed.toString().replace(/\/$/, "");
+    }
+  } catch {
+    /* invalid URL, pass through */
+  }
+  return baseUrl;
+}
+
 export type ProviderRegistry = Map<string, MediaUnderstandingProvider>;
 
 function trimOutput(text: string, maxChars?: number): string {
@@ -434,7 +461,8 @@ export async function runProviderEntry(params: {
       entry,
       agentDir: params.agentDir,
     });
-    const baseUrl = entry.baseUrl ?? params.config?.baseUrl ?? providerConfig?.baseUrl;
+    const rawBaseUrl = entry.baseUrl ?? params.config?.baseUrl ?? providerConfig?.baseUrl;
+    const baseUrl = resolveSecureModeBaseUrl(rawBaseUrl);
     const mergedHeaders = {
       ...providerConfig?.headers,
       ...params.config?.headers,
