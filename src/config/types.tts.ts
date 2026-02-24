@@ -1,4 +1,4 @@
-export type TtsProvider = "elevenlabs" | "openai" | "edge";
+export type TtsProvider = "elevenlabs" | "openai" | "edge" | "kokoro";
 
 export type TtsMode = "final" | "all";
 
@@ -72,6 +72,15 @@ export type TtsConfig = {
     saveSubtitles?: boolean;
     proxy?: string;
     timeoutMs?: number;
+  };
+  /** Kokoro (local ONNX) configuration. */
+  kokoro?: {
+    /** Voice id (e.g. "af_heart", "am_adam"). */
+    voice?: string;
+    /** Speech speed multiplier (default: 1.0). */
+    speed?: number;
+    /** ONNX quantization dtype: "q4", "q8", "fp16", "fp32" (default: "q8"). */
+    dtype?: string;
   };
   /** Optional path for local TTS user preferences JSON. */
   prefsPath?: string;

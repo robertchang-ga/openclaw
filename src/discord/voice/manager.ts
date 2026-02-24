@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -22,6 +23,7 @@ import { agentCommand } from "../../commands/agent.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { DiscordAccountConfig, TtsConfig } from "../../config/types.js";
 import { logVerbose, shouldLogVerbose } from "../../globals.js";
+import { onAgentEvent } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { resolvePreferredOpenClawTmpDir } from "../../infra/tmp-openclaw-dir.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -34,6 +36,7 @@ import {
 import { resolveAgentRoute } from "../../routing/resolve-route.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { parseTtsDirectives } from "../../tts/tts-core.js";
+import { kokoroTTSBuffer, resolveKokoroConfig } from "../../tts/tts-kokoro.js";
 import { resolveTtsConfig, textToSpeech, type ResolvedTtsConfig } from "../../tts/tts.js";
 
 const require = createRequire(import.meta.url);
@@ -583,75 +586,226 @@ export class DiscordVoiceManager {
     const speakerLabel = await this.resolveSpeakerLabel(entry.guildId, userId);
     const prompt = speakerLabel ? `${speakerLabel}: ${transcript}` : transcript;
 
-    const result = await agentCommand(
-      {
-        message: prompt,
-        sessionKey: entry.route.sessionKey,
-        agentId: entry.route.agentId,
-        messageChannel: "discord",
-        deliver: false,
-      },
-      this.params.runtime,
-    );
-
-    const replyText = (result.payloads ?? [])
-      .map((payload) => payload.text)
-      .filter((text) => typeof text === "string" && text.trim())
-      .join("\n")
-      .trim();
-
-    if (!replyText) {
-      logVoiceVerbose(
-        `reply empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
-      );
-      return;
-    }
-    logVoiceVerbose(
-      `reply ok (${replyText.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
-    );
-
+    // Resolve TTS config upfront to determine streaming path.
     const { cfg: ttsCfg, resolved: ttsConfig } = resolveVoiceTtsConfig({
       cfg: this.params.cfg,
       override: this.params.discordConfig.voice?.tts,
     });
-    const directive = parseTtsDirectives(replyText, ttsConfig.modelOverrides);
-    const speakText = directive.overrides.ttsText ?? directive.cleanedText.trim();
-    if (!speakText) {
-      logVoiceVerbose(
-        `tts skipped (empty): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
-      );
-      return;
-    }
+    const isKokoro = ttsConfig.provider === "kokoro";
 
-    const ttsResult = await textToSpeech({
-      text: speakText,
-      cfg: ttsCfg,
-      channel: "discord",
-      overrides: directive.overrides,
-    });
-    if (!ttsResult.success || !ttsResult.audioPath) {
-      logger.warn(`discord voice: TTS failed: ${ttsResult.error ?? "unknown error"}`);
-      return;
-    }
-    const audioPath = ttsResult.audioPath;
-    logVoiceVerbose(
-      `tts ok (${speakText.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
-    );
+    if (isKokoro) {
+      // ─── Streaming TTS path (kokoro) ──────────────────────────────────
+      // Subscribe to agent event bus BEFORE calling agentCommand so we
+      // receive per-token text deltas as the LLM streams its response.
+      // We accumulate text and split at sentence boundaries, generating
+      // audio for each sentence and enqueuing it for playback immediately.
+      const kokoroConfig = resolveKokoroConfig(this.params.cfg.messages?.tts?.kokoro);
+      const runId = randomUUID();
+      let sentenceBuffer = "";
+      let sentenceCount = 0;
 
-    this.enqueuePlayback(entry, async () => {
+      const splitAndSpeak = (flush: boolean) => {
+        // Sentence boundary: period, exclamation, question mark, or colon
+        // followed by whitespace (or end of string if flushing).
+        const boundary = flush ? /([.!?:;])\s*/ : /([.!?:;])\s+/;
+
+        let match: RegExpExecArray | null;
+        while ((match = boundary.exec(sentenceBuffer)) !== null) {
+          const sentenceEnd = match.index + match[0].length;
+          const sentence = sentenceBuffer.slice(0, sentenceEnd).trim();
+          sentenceBuffer = sentenceBuffer.slice(sentenceEnd);
+          if (sentence.length < 2) {
+            continue;
+          }
+
+          sentenceCount++;
+          const sentenceNum = sentenceCount;
+          logVoiceVerbose(
+            `kokoro stream sentence #${sentenceNum} (${sentence.length} chars): guild ${entry.guildId}`,
+          );
+
+          // Enqueue TTS generation + playback for this sentence.
+          this.enqueuePlayback(entry, async () => {
+            const wavBuf = await kokoroTTSBuffer(sentence, kokoroConfig);
+            const tempRoot = resolvePreferredOpenClawTmpDir();
+            mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+            const tempDir = mkdtempSync(path.join(tempRoot, "tts-stream-"));
+            const audioPath = path.join(tempDir, `s${sentenceNum}.wav`);
+            writeFileSync(audioPath, wavBuf);
+            logVoiceVerbose(
+              `kokoro stream playback #${sentenceNum}: guild ${entry.guildId} file ${path.basename(audioPath)}`,
+            );
+            const resource = createAudioResource(audioPath);
+            entry.player.play(resource);
+            await entersState(
+              entry.player,
+              AudioPlayerStatus.Playing,
+              PLAYBACK_READY_TIMEOUT_MS,
+            ).catch(() => undefined);
+            await entersState(
+              entry.player,
+              AudioPlayerStatus.Idle,
+              SPEAKING_READY_TIMEOUT_MS,
+            ).catch(() => undefined);
+            // Clean up temp file.
+            fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+          });
+        }
+
+        // On flush, speak whatever remains even if no sentence boundary.
+        if (flush && sentenceBuffer.trim().length >= 2) {
+          const remaining = sentenceBuffer.trim();
+          sentenceBuffer = "";
+          sentenceCount++;
+          const sentenceNum = sentenceCount;
+          logVoiceVerbose(
+            `kokoro stream flush #${sentenceNum} (${remaining.length} chars): guild ${entry.guildId}`,
+          );
+          this.enqueuePlayback(entry, async () => {
+            const wavBuf = await kokoroTTSBuffer(remaining, kokoroConfig);
+            const tempRoot = resolvePreferredOpenClawTmpDir();
+            mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+            const tempDir = mkdtempSync(path.join(tempRoot, "tts-stream-"));
+            const audioPath = path.join(tempDir, `s${sentenceNum}.wav`);
+            writeFileSync(audioPath, wavBuf);
+            const resource = createAudioResource(audioPath);
+            entry.player.play(resource);
+            await entersState(
+              entry.player,
+              AudioPlayerStatus.Playing,
+              PLAYBACK_READY_TIMEOUT_MS,
+            ).catch(() => undefined);
+            await entersState(
+              entry.player,
+              AudioPlayerStatus.Idle,
+              SPEAKING_READY_TIMEOUT_MS,
+            ).catch(() => undefined);
+            fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+          });
+        }
+      };
+
+      // Subscribe to agent events for this run.
+      const unsubscribe = onAgentEvent((evt) => {
+        if (evt.runId !== runId || evt.stream !== "assistant") {
+          return;
+        }
+        const delta = typeof evt.data.delta === "string" ? evt.data.delta : "";
+        if (!delta) {
+          return;
+        }
+        sentenceBuffer += delta;
+        splitAndSpeak(false);
+      });
+
+      try {
+        const result = await agentCommand(
+          {
+            message: prompt,
+            sessionKey: entry.route.sessionKey,
+            agentId: entry.route.agentId,
+            messageChannel: "discord",
+            deliver: false,
+            runId,
+          },
+          this.params.runtime,
+        );
+
+        // Flush any remaining buffered text after the LLM completes.
+        // If the event listener didn't capture anything (non-streaming model),
+        // fall back to the full reply text.
+        const replyText = (result.payloads ?? [])
+          .map((payload) => payload.text)
+          .filter((text) => typeof text === "string" && text.trim())
+          .join("\n")
+          .trim();
+
+        if (sentenceCount === 0 && replyText) {
+          // Non-streaming model fallback: generate TTS for the full reply.
+          sentenceBuffer = replyText;
+        }
+        splitAndSpeak(true);
+
+        if (sentenceCount === 0) {
+          logVoiceVerbose(
+            `reply empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+          );
+        } else {
+          logVoiceVerbose(
+            `kokoro stream done (${sentenceCount} sentences): guild ${entry.guildId}`,
+          );
+        }
+      } finally {
+        unsubscribe();
+      }
+    } else {
+      // ─── Standard TTS path (non-kokoro) ─────────────────────────────
+      const result = await agentCommand(
+        {
+          message: prompt,
+          sessionKey: entry.route.sessionKey,
+          agentId: entry.route.agentId,
+          messageChannel: "discord",
+          deliver: false,
+        },
+        this.params.runtime,
+      );
+
+      const replyText = (result.payloads ?? [])
+        .map((payload) => payload.text)
+        .filter((text) => typeof text === "string" && text.trim())
+        .join("\n")
+        .trim();
+
+      if (!replyText) {
+        logVoiceVerbose(
+          `reply empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+        );
+        return;
+      }
       logVoiceVerbose(
-        `playback start: guild ${entry.guildId} channel ${entry.channelId} file ${path.basename(audioPath)}`,
+        `reply ok (${replyText.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
       );
-      const resource = createAudioResource(audioPath);
-      entry.player.play(resource);
-      await entersState(entry.player, AudioPlayerStatus.Playing, PLAYBACK_READY_TIMEOUT_MS).catch(
-        () => undefined,
+
+      const directive = parseTtsDirectives(replyText, ttsConfig.modelOverrides);
+      const speakText = directive.overrides.ttsText ?? directive.cleanedText.trim();
+      if (!speakText) {
+        logVoiceVerbose(
+          `tts skipped (empty): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+        );
+        return;
+      }
+
+      const ttsResult = await textToSpeech({
+        text: speakText,
+        cfg: ttsCfg,
+        channel: "discord",
+        overrides: directive.overrides,
+      });
+      if (!ttsResult.success || !ttsResult.audioPath) {
+        logger.warn(`discord voice: TTS failed: ${ttsResult.error ?? "unknown error"}`);
+        return;
+      }
+      const audioPath = ttsResult.audioPath;
+      logVoiceVerbose(
+        `tts ok (${speakText.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
       );
-      await entersState(entry.player, AudioPlayerStatus.Idle, SPEAKING_READY_TIMEOUT_MS).catch(
-        () => undefined,
-      );
-      logVoiceVerbose(`playback done: guild ${entry.guildId} channel ${entry.channelId}`);
-    });
+
+      this.enqueuePlayback(entry, async () => {
+        logVoiceVerbose(
+          `playback start: guild ${entry.guildId} channel ${entry.channelId} file ${path.basename(audioPath)}`,
+        );
+        const resource = createAudioResource(audioPath);
+        entry.player.play(resource);
+        await entersState(entry.player, AudioPlayerStatus.Playing, PLAYBACK_READY_TIMEOUT_MS).catch(
+          () => undefined,
+        );
+        await entersState(entry.player, AudioPlayerStatus.Idle, SPEAKING_READY_TIMEOUT_MS).catch(
+          () => undefined,
+        );
+        logVoiceVerbose(`playback done: guild ${entry.guildId} channel ${entry.channelId}`);
+      });
+    }
   }
 
   private async resolveSpeakerLabel(guildId: string, userId: string): Promise<string | undefined> {

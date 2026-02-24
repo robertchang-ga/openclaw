@@ -8,6 +8,17 @@ const logger = createSubsystemLogger("security/gateway-container");
 const GATEWAY_IMAGE = "openclaw-gateway:latest";
 const GATEWAY_CONTAINER_NAME = "openclaw-gateway-secure";
 
+export type ServiceRelay = {
+  /** Human-readable name for logging (e.g. "speaches"). */
+  name: string;
+  /** Port the relay listens on inside the internal network. */
+  containerPort: number;
+  /** Port on the host to forward to (via host.docker.internal on Windows, socket on Linux). */
+  hostPort: number;
+  /** Env var name to set in the gateway container (value = relay hostname:port). */
+  envVar?: string;
+};
+
 export type GatewayContainerOptions = {
   /** Gateway WebSocket port (host and container) */
   gatewayPort: number;
@@ -20,6 +31,8 @@ export type GatewayContainerOptions = {
   env?: Record<string, string | undefined>;
   /** Bind mounts in format ["host:container:ro"] */
   binds?: string[];
+  /** Additional service relays (e.g. Speaches STT). */
+  serviceRelays?: ServiceRelay[];
 };
 
 const SECURE_NETWORK_NAME = "openclaw-secure-net";
@@ -134,6 +147,60 @@ async function stopRelayContainer(): Promise<void> {
 }
 
 /**
+ * Start a service relay container that bridges a host service (e.g. Speaches)
+ * into the internal network so the gateway container can reach it.
+ */
+async function startServiceRelayContainer(relay: ServiceRelay): Promise<string> {
+  const containerName = `openclaw-relay-${relay.name}`;
+  // Remove any existing relay for this service
+  try {
+    await execDocker(["rm", "-f", containerName], { allowFailure: true });
+  } catch {
+    // ignore
+  }
+
+  const args = [
+    "run",
+    "-d",
+    "--name",
+    containerName,
+    "--network",
+    SECURE_NETWORK_NAME,
+    "--restart",
+    "unless-stopped",
+    "--add-host",
+    "host.docker.internal:host-gateway",
+    SOCAT_IMAGE,
+    `TCP-LISTEN:${relay.containerPort},fork,reuseaddr`,
+    `TCP:host.docker.internal:${relay.hostPort}`,
+  ];
+
+  await execDocker(args);
+  logger.info(
+    `Service relay started: ${containerName} (host.docker.internal:${relay.hostPort} → port ${relay.containerPort})`,
+  );
+  return containerName;
+}
+
+/** Track service relay container names for cleanup. */
+const activeServiceRelays: string[] = [];
+
+/**
+ * Stop all service relay containers.
+ */
+async function stopServiceRelayContainers(): Promise<void> {
+  for (const name of activeServiceRelays) {
+    try {
+      await execDocker(["rm", "-f", name], { allowFailure: true });
+      logger.info(`Removed service relay: ${name}`);
+    } catch {
+      // ignore
+    }
+  }
+  activeServiceRelays.length = 0;
+}
+
+/**
  * Full cleanup: gateway container, relay container, and internal network.
  */
 export async function stopGatewayContainer(): Promise<void> {
@@ -143,6 +210,7 @@ export async function stopGatewayContainer(): Promise<void> {
     logger.info(`Stopping existing gateway container: ${GATEWAY_CONTAINER_NAME}`);
     await execDocker(["rm", "-f", GATEWAY_CONTAINER_NAME]);
   }
+  await stopServiceRelayContainers();
   await stopRelayContainer();
   await removeSecureNetwork();
 }
@@ -257,6 +325,18 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
     "-e",
     "XDG_CONFIG_HOME=/home/node/.config",
   ];
+
+  // Start service relays (e.g. Speaches STT) BEFORE the gateway so env vars
+  // can be injected at container launch time.
+  for (const relay of opts.serviceRelays ?? []) {
+    const relayName = await startServiceRelayContainer(relay);
+    activeServiceRelays.push(relayName);
+    if (relay.envVar) {
+      const relayUrl = `http://${relayName}:${relay.containerPort}`;
+      args.push("-e", `${relay.envVar}=${relayUrl}`);
+      logger.info(`Service relay ${relay.name}: ${relay.envVar}=${relayUrl}`);
+    }
+  }
 
   // Add bind mounts for tools/skills
   for (const bind of opts.binds || []) {

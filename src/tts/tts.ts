@@ -40,6 +40,7 @@ import {
   scheduleCleanup,
   summarizeText,
 } from "./tts-core.js";
+import { kokoroTTS, resolveKokoroConfig, type KokoroConfig } from "./tts-kokoro.js";
 export { OPENAI_TTS_MODELS, OPENAI_TTS_VOICES } from "./tts-core.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -128,6 +129,7 @@ export type ResolvedTtsConfig = {
     proxy?: string;
     timeoutMs?: number;
   };
+  kokoro: KokoroConfig;
   prefsPath?: string;
   maxTextLength: number;
   timeoutMs: number;
@@ -303,6 +305,7 @@ export function resolveTtsConfig(cfg: OpenClawConfig): ResolvedTtsConfig {
       proxy: raw.edge?.proxy?.trim() || undefined,
       timeoutMs: raw.edge?.timeoutMs,
     },
+    kokoro: resolveKokoroConfig(raw.kokoro),
     prefsPath: raw.prefsPath,
     maxTextLength: raw.maxTextLength ?? DEFAULT_MAX_TEXT_LENGTH,
     timeoutMs: raw.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -508,7 +511,7 @@ export function resolveTtsApiKey(
   return undefined;
 }
 
-export const TTS_PROVIDERS = ["openai", "elevenlabs", "edge"] as const;
+export const TTS_PROVIDERS = ["openai", "elevenlabs", "edge", "kokoro"] as const;
 
 export function resolveTtsProviderOrder(primary: TtsProvider): TtsProvider[] {
   return [primary, ...TTS_PROVIDERS.filter((provider) => provider !== primary)];
@@ -517,6 +520,9 @@ export function resolveTtsProviderOrder(primary: TtsProvider): TtsProvider[] {
 export function isTtsProviderConfigured(config: ResolvedTtsConfig, provider: TtsProvider): boolean {
   if (provider === "edge") {
     return config.edge.enabled;
+  }
+  if (provider === "kokoro") {
+    return true; // Local ONNX, always available
   }
   return Boolean(resolveTtsApiKey(config, provider));
 }
@@ -558,6 +564,18 @@ export async function textToSpeech(params: {
   for (const provider of providers) {
     const providerStart = Date.now();
     try {
+      if (provider === "kokoro") {
+        const kokoroResult = await kokoroTTS(params.text, config.kokoro);
+        return {
+          success: true,
+          audioPath: kokoroResult.audioPath,
+          latencyMs: Date.now() - providerStart,
+          provider,
+          outputFormat: kokoroResult.outputFormat,
+          voiceCompatible: false,
+        };
+      }
+
       if (provider === "edge") {
         if (!config.edge.enabled) {
           errors.push("edge: disabled");
