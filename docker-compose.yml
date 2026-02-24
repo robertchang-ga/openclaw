@@ -76,6 +76,9 @@ services:
       - "127.0.0.1:${SPEACHES_PORT:-8090}:8000"
     environment:
       - WHISPER__MODEL=${SPEACHES_MODEL:-Systran/faster-distil-whisper-large-v3}
+    networks:
+      - default
+      - openclaw-secure-net
     deploy:
       resources:
         reservations:
@@ -98,3 +101,7 @@ volumes:
     driver: local
   speaches_models:
     driver: local
+
+networks:
+  openclaw-secure-net:
+    external: true
