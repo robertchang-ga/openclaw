@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execSync, spawn, type ChildProcess } from "node:child_process";
 import process from "node:process";
 import { execDocker, dockerContainerState } from "../agents/sandbox/docker.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -33,6 +33,14 @@ export type GatewayContainerOptions = {
   binds?: string[];
   /** Additional service relays (e.g. Speaches STT). */
   serviceRelays?: ServiceRelay[];
+  /**
+   * Sidecar service names from docker-compose.yml to ensure are running
+   * (e.g. ["cognee", "speaches"]). These are persistent — they survive gateway
+   * restarts and are NOT torn down when the gateway stops.
+   */
+  sidecars?: string[];
+  /** Working directory containing docker-compose.yml (defaults to cwd). */
+  composeDir?: string;
 };
 
 const SECURE_NETWORK_NAME = "openclaw-secure-net";
@@ -201,6 +209,43 @@ async function stopServiceRelayContainers(): Promise<void> {
 }
 
 /**
+ * Ensure sidecar containers from docker-compose.yml are running.
+ * Uses `docker compose up -d` which is idempotent:
+ *   - Already running → no-op
+ *   - Exists but stopped → started
+ *   - Doesn't exist → created from compose definition
+ *
+ * Sidecars are persistent and NOT torn down with the gateway.
+ */
+async function ensureSidecarContainers(
+  services: string[],
+  composeDir?: string,
+): Promise<void> {
+  const cwd = composeDir ?? process.cwd();
+  for (const service of services) {
+    try {
+      // Check if already running before invoking compose (faster path)
+      const state = await dockerContainerState(service);
+      if (state.running) {
+        logger.info(`Sidecar ${service}: already running`);
+        continue;
+      }
+
+      logger.info(`Sidecar ${service}: starting via docker compose...`);
+      execSync(`docker compose up -d ${service}`, {
+        cwd,
+        stdio: "pipe",
+        timeout: 120_000,
+      });
+      logger.info(`Sidecar ${service}: started`);
+    } catch (err) {
+      // Sidecar failure is non-fatal — the gateway can still run without it
+      logger.warn(`Sidecar ${service}: failed to start — ${String(err)}`);
+    }
+  }
+}
+
+/**
  * Full cleanup: gateway container, relay container, and internal network.
  */
 export async function stopGatewayContainer(): Promise<void> {
@@ -275,6 +320,13 @@ function stopSocatForwarder(): void {
 
 export async function startGatewayContainer(opts: GatewayContainerOptions): Promise<string> {
   await stopGatewayContainer();
+
+  // Ensure sidecar containers (cognee, speaches, etc.) are running.
+  // Uses docker compose up -d which is idempotent — running containers are untouched,
+  // stopped containers are started, missing containers are created.
+  if (opts.sidecars && opts.sidecars.length > 0) {
+    await ensureSidecarContainers(opts.sidecars, opts.composeDir);
+  }
 
   // Set up network isolation: internal network + relay
   await ensureSecureNetwork();

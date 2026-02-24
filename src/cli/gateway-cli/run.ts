@@ -72,6 +72,30 @@ type GatewayRunOpts = {
   secure?: boolean;
 };
 
+/**
+ * Determine which sidecar services from docker-compose.yml need to be running.
+ * Returns service names that match the docker-compose service definitions.
+ */
+function resolveSidecars(cfg: ReturnType<typeof loadConfig>): string[] {
+  const sidecars: string[] = [];
+
+  // Cognee memory plugin
+  const cogneeEntry = cfg.plugins?.entries?.["memory-cognee"] as
+    | Record<string, unknown>
+    | undefined;
+  if (cogneeEntry?.enabled) {
+    sidecars.push("cognee");
+  }
+
+  // Speaches STT for Discord voice
+  const voice = cfg.channels?.discord?.voice as Record<string, unknown> | undefined;
+  if (voice?.enabled) {
+    sidecars.push("speaches");
+  }
+
+  return sidecars;
+}
+
 const gatewayLog = createSubsystemLogger("gateway");
 
 const GATEWAY_RUN_VALUE_KEYS = [
@@ -444,6 +468,8 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
           gatewayPort: port,
           env: containerEnv,
           binds: sanitizedMounts.binds,
+          sidecars: resolveSidecars(cfg),
+          composeDir: process.cwd(),
         });
         gatewayLog.info(`Gateway container started: ${containerName}`);
       } catch (err) {
