@@ -386,6 +386,11 @@ export class DiscordVoiceManager {
       adapterCreator,
       selfDeaf: false,
       selfMute: false,
+      // @discordjs/voice 0.19.x DAVE receive decryption is broken (GitHub #11419).
+      // All packets fail with DecryptionFailed(UnencryptedWhenPassthroughDisabled).
+      // Falls back to standard XSalsa20 transport encryption (still encrypted).
+      // TODO: re-enable when @discordjs/voice ships a fix (DAVE enforced March 2 2026).
+      daveEncryption: false,
     });
 
     try {
