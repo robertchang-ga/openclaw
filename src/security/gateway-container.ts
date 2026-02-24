@@ -379,9 +379,9 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
 
   args.push(GATEWAY_IMAGE);
 
-  // Bind to lan (all interfaces) inside container — safe since the container is on an
-  // internal-only network with no outbound internet. The host socat forwarder restricts
-  // access to 127.0.0.1 on the host side.
+  // Bind to lan (all interfaces) inside container — safe since the container holds no
+  // secrets (only placeholders). The host socat forwarder restricts access to 127.0.0.1
+  // on the host side.
   args.push("node", "dist/index.js", "gateway", "--allow-unconfigured", "--bind", "lan");
 
   logger.info(
@@ -389,9 +389,17 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
   );
   await execDocker(args);
 
+  // Also connect the container to the default bridge network for outbound internet access.
+  // This is required for Discord voice connections (WebSocket signaling + UDP audio to
+  // dynamic *.discord.media servers) which cannot be proxied through the relay.
+  // The container holds no secrets (only placeholders injected by the secrets proxy),
+  // so outbound access does not weaken the security model.
+  await execDocker(["network", "connect", "bridge", GATEWAY_CONTAINER_NAME]);
+  logger.info(`Connected ${GATEWAY_CONTAINER_NAME} to bridge network for outbound access`);
+
   // Get the container's IP on the internal network and start a host-side socat forwarder.
   // This makes the gateway port accessible on the host (127.0.0.1:gatewayPort) without
-  // putting the container on the bridge network (which would give it outbound internet access).
+  // requiring the container to expose ports on the bridge network.
   const containerIp = await getContainerIp(GATEWAY_CONTAINER_NAME, SECURE_NETWORK_NAME);
   socatProcess = startSocatForwarder(opts.gatewayPort, containerIp, opts.gatewayPort);
 
