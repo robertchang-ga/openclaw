@@ -93,6 +93,7 @@ function resolveSidecars(cfg: ReturnType<typeof loadConfig>): string[] {
     sidecars.push("speaches");
   }
 
+  gatewayLog.info(`Resolved sidecars: [${sidecars.join(", ")}]`);
   return sidecars;
 }
 
@@ -469,7 +470,6 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
           env: containerEnv,
           binds: sanitizedMounts.binds,
           sidecars: resolveSidecars(cfg),
-          composeDir: process.cwd(),
         });
         gatewayLog.info(`Gateway container started: ${containerName}`);
       } catch (err) {

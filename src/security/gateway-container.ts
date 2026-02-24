@@ -1,5 +1,8 @@
 import { execSync, spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { execDocker, dockerContainerState } from "../agents/sandbox/docker.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 
@@ -209,6 +212,46 @@ async function stopServiceRelayContainers(): Promise<void> {
 }
 
 /**
+ * Find the directory containing docker-compose.yml.
+ *
+ * Search order:
+ *   1. OPENCLAW_COMPOSE_DIR env var (explicit override)
+ *   2. Walk up from this module file (works when `npm install -g .` symlinks back to the repo)
+ *   3. process.cwd() (local development)
+ *
+ * Returns undefined if docker-compose.yml is not found anywhere.
+ */
+function resolveComposeDir(): string | undefined {
+  // 1. Explicit env override
+  const envDir = process.env.OPENCLAW_COMPOSE_DIR;
+  if (envDir && fs.existsSync(path.join(envDir, "docker-compose.yml"))) {
+    return envDir;
+  }
+
+  // 2. Walk up from this file (handles global install symlinks)
+  try {
+    let dir = path.dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 10; i++) {
+      if (fs.existsSync(path.join(dir, "docker-compose.yml"))) {
+        return dir;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // import.meta.url resolution may fail in some environments
+  }
+
+  // 3. Fall back to cwd
+  if (fs.existsSync(path.join(process.cwd(), "docker-compose.yml"))) {
+    return process.cwd();
+  }
+
+  return undefined;
+}
+
+/**
  * Ensure sidecar containers from docker-compose.yml are running.
  * Uses `docker compose up -d` which is idempotent:
  *   - Already running → no-op
@@ -221,7 +264,11 @@ async function ensureSidecarContainers(
   services: string[],
   composeDir?: string,
 ): Promise<void> {
-  const cwd = composeDir ?? process.cwd();
+  const cwd = composeDir ?? resolveComposeDir();
+  if (!cwd) {
+    logger.warn("Sidecar skip: docker-compose.yml not found (set OPENCLAW_COMPOSE_DIR if needed)");
+    return;
+  }
   for (const service of services) {
     try {
       // Check if already running before invoking compose (faster path)
