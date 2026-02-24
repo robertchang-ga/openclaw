@@ -570,7 +570,7 @@ export class DiscordVoiceManager {
     durationSeconds: number;
   }) {
     const { entry, wavPath, userId, durationSeconds } = params;
-    logVoiceVerbose(
+    logger.info(
       `segment processing (${durationSeconds.toFixed(2)}s): guild ${entry.guildId} channel ${entry.channelId}`,
     );
     const transcript = await transcribeAudio({
@@ -579,12 +579,12 @@ export class DiscordVoiceManager {
       filePath: wavPath,
     });
     if (!transcript) {
-      logVoiceVerbose(
+      logger.info(
         `transcription empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
       );
       return;
     }
-    logVoiceVerbose(
+    logger.info(
       `transcription ok (${transcript.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
     );
 
