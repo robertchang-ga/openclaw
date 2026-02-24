@@ -515,7 +515,7 @@ export class DiscordVoiceManager {
     }
 
     entry.activeSpeakers.add(userId);
-    logVoiceVerbose(
+    logger.info(
       `capture start: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
     );
     if (entry.player.state.status === AudioPlayerStatus.Playing) {
@@ -535,7 +535,7 @@ export class DiscordVoiceManager {
     try {
       const pcm = await decodeOpusStream(stream);
       if (pcm.length === 0) {
-        logVoiceVerbose(
+        logger.info(
           `capture empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
         );
         return;
@@ -547,7 +547,7 @@ export class DiscordVoiceManager {
         );
         return;
       }
-      logVoiceVerbose(
+      logger.info(
         `capture ready (${durationSeconds.toFixed(2)}s): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
       );
       this.enqueueProcessing(entry, async () => {
