@@ -37,6 +37,12 @@ function shouldBypassProxy(url: string): boolean {
     if (hostname === "localhost" || hostname === "::1" || isLoopbackIPv4(hostname)) {
       return true;
     }
+    // Bypass bare hostnames (no dots) — these are Docker-internal DNS names
+    // (e.g. "speaches", "cognee") that only resolve inside the container network.
+    // The host-side secrets proxy cannot resolve them; they must go direct.
+    if (!hostname.includes(".")) {
+      return true;
+    }
     // Also bypass requests TO the proxy itself to avoid infinite loop.
     // Compare origins (scheme+host+port) so default ports (80/443) are normalized.
     if (PROXY_URL) {
