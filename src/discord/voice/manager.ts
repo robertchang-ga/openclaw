@@ -607,6 +607,9 @@ export class DiscordVoiceManager {
 
     const speakerLabel = await this.resolveSpeakerLabel(entry.guildId, userId);
     const prompt = speakerLabel ? `${speakerLabel}: ${transcript}` : transcript;
+    logger.info(
+      `speaker: ${speakerLabel ?? "(unknown)"}, prompt: "${prompt.slice(0, 80)}${prompt.length > 80 ? "..." : ""}"`,
+    );
 
     // Resolve TTS config upfront to determine streaming path.
     const { cfg: ttsCfg, resolved: ttsConfig } = resolveVoiceTtsConfig({
@@ -614,6 +617,7 @@ export class DiscordVoiceManager {
       override: this.params.discordConfig.voice?.tts,
     });
     const isKokoro = ttsConfig.provider === "kokoro";
+    logger.info(`tts path: ${isKokoro ? "kokoro (streaming)" : ttsConfig.provider ?? "default"}`);
 
     if (isKokoro) {
       // ─── Streaming TTS path (kokoro) ──────────────────────────────────
@@ -642,8 +646,8 @@ export class DiscordVoiceManager {
 
           sentenceCount++;
           const sentenceNum = sentenceCount;
-          logVoiceVerbose(
-            `kokoro stream sentence #${sentenceNum} (${sentence.length} chars): guild ${entry.guildId}`,
+          logger.info(
+            `kokoro sentence #${sentenceNum} (${sentence.length} chars): guild ${entry.guildId}`,
           );
 
           // Enqueue TTS generation + playback for this sentence.
@@ -654,8 +658,8 @@ export class DiscordVoiceManager {
             const tempDir = mkdtempSync(path.join(tempRoot, "tts-stream-"));
             const audioPath = path.join(tempDir, `s${sentenceNum}.wav`);
             writeFileSync(audioPath, wavBuf);
-            logVoiceVerbose(
-              `kokoro stream playback #${sentenceNum}: guild ${entry.guildId} file ${path.basename(audioPath)}`,
+            logger.info(
+              `kokoro playback #${sentenceNum}: guild ${entry.guildId} file ${path.basename(audioPath)} (${wavBuf.length} bytes)`,
             );
             const resource = createAudioResource(audioPath);
             entry.player.play(resource);
@@ -680,8 +684,8 @@ export class DiscordVoiceManager {
           sentenceBuffer = "";
           sentenceCount++;
           const sentenceNum = sentenceCount;
-          logVoiceVerbose(
-            `kokoro stream flush #${sentenceNum} (${remaining.length} chars): guild ${entry.guildId}`,
+          logger.info(
+            `kokoro flush #${sentenceNum} (${remaining.length} chars): guild ${entry.guildId}`,
           );
           this.enqueuePlayback(entry, async () => {
             const wavBuf = await kokoroTTSBuffer(remaining, kokoroConfig);
@@ -721,6 +725,7 @@ export class DiscordVoiceManager {
       });
 
       try {
+        logger.info(`agent command: sending prompt to agent ${entry.route.agentId}`);
         const result = await agentCommand(
           {
             message: prompt,
@@ -749,12 +754,12 @@ export class DiscordVoiceManager {
         splitAndSpeak(true);
 
         if (sentenceCount === 0) {
-          logVoiceVerbose(
+          logger.info(
             `reply empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
           );
         } else {
-          logVoiceVerbose(
-            `kokoro stream done (${sentenceCount} sentences): guild ${entry.guildId}`,
+          logger.info(
+            `kokoro done (${sentenceCount} sentences): guild ${entry.guildId}`,
           );
         }
       } finally {
@@ -780,19 +785,19 @@ export class DiscordVoiceManager {
         .trim();
 
       if (!replyText) {
-        logVoiceVerbose(
+        logger.info(
           `reply empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
         );
         return;
       }
-      logVoiceVerbose(
+      logger.info(
         `reply ok (${replyText.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
       );
 
       const directive = parseTtsDirectives(replyText, ttsConfig.modelOverrides);
       const speakText = directive.overrides.ttsText ?? directive.cleanedText.trim();
       if (!speakText) {
-        logVoiceVerbose(
+        logger.info(
           `tts skipped (empty): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
         );
         return;
@@ -809,12 +814,12 @@ export class DiscordVoiceManager {
         return;
       }
       const audioPath = ttsResult.audioPath;
-      logVoiceVerbose(
-        `tts ok (${speakText.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
+      logger.info(
+        `tts ok (${speakText.length} chars): guild ${entry.guildId} channel ${entry.channelId} file ${path.basename(audioPath)}`,
       );
 
       this.enqueuePlayback(entry, async () => {
-        logVoiceVerbose(
+        logger.info(
           `playback start: guild ${entry.guildId} channel ${entry.channelId} file ${path.basename(audioPath)}`,
         );
         const resource = createAudioResource(audioPath);
@@ -825,7 +830,7 @@ export class DiscordVoiceManager {
         await entersState(entry.player, AudioPlayerStatus.Idle, SPEAKING_READY_TIMEOUT_MS).catch(
           () => undefined,
         );
-        logVoiceVerbose(`playback done: guild ${entry.guildId} channel ${entry.channelId}`);
+        logger.info(`playback done: guild ${entry.guildId} channel ${entry.channelId}`);
       });
     }
   }
