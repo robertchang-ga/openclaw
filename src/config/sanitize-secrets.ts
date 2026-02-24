@@ -1,13 +1,15 @@
+import { RELAY_CONTAINER_NAME } from "../security/gateway-container.js";
 import type { OpenClawConfig } from "./types.openclaw.js";
 
 /**
  * Sanitizes a config object by replacing sensitive values with placeholders.
  * Used in secure mode to ensure no secrets exist in the container.
  * @param opts.force - If true, sanitize regardless of OPENCLAW_SECURE_MODE env var
+ * @param opts.proxyPort - Proxy port for setting discord.proxy WS relay URL (secure mode only)
  */
 export function sanitizeConfigSecrets(
   cfg: OpenClawConfig,
-  opts?: { force?: boolean },
+  opts?: { force?: boolean; proxyPort?: number },
 ): OpenClawConfig {
   // Only sanitize when explicitly requested by the caller.
   if (!opts?.force) {
@@ -22,6 +24,14 @@ export function sanitizeConfigSecrets(
     // Discord
     if (sanitized.channels.discord?.token) {
       sanitized.channels.discord.token = "{{CONFIG:channels.discord.token}}";
+      // Route the Discord gateway WebSocket through the secrets proxy for token injection.
+      // The proxy's WS relay endpoint (at /ws-relay) intercepts the IDENTIFY frame and
+      // replaces the placeholder with the real token before forwarding to Discord.
+      // proxyPort is only passed in secure mode (force=true), so this guard is
+      // intentionally separate from the force check above.
+      if (opts?.proxyPort) {
+        sanitized.channels.discord.proxy = `ws-relay+http://${RELAY_CONTAINER_NAME}:${opts.proxyPort}`;
+      }
     }
 
     // Telegram

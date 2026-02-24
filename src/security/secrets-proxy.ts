@@ -1,13 +1,14 @@
-import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import path from "node:path";
 import { request } from "undici";
-import type { SecretRegistry } from "./secrets-registry.js";
+import { STATE_DIR } from "../config/paths.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { loadAllowlist, isDomainAllowed } from "./secrets-proxy-allowlist.js";
+import type { SecretRegistry } from "./secrets-registry.js";
 import { resolveOAuthToken } from "./secrets-registry.js";
-import { STATE_DIR } from "../config/paths.js";
+import { installWsRelayHandler } from "./ws-relay.js";
 
 const logger = createSubsystemLogger("security/secrets-proxy");
 
@@ -27,7 +28,9 @@ function getCachedAllowlist(): string[] {
       _allowlistMtimeMs = mtime;
     }
   } catch {
-    if (!_cachedAllowlist) _cachedAllowlist = loadAllowlist();
+    if (!_cachedAllowlist) {
+      _cachedAllowlist = loadAllowlist();
+    }
   }
   return _cachedAllowlist;
 }
@@ -120,7 +123,9 @@ async function replacePlaceholders(text: string, registry: SecretRegistry): Prom
   // Each .replace() callback below is invoked once per regex match.
   // count++ inside each callback ensures the limit is enforced per individual match.
   const checkLimits = () => {
-    if (limitHit) return true;
+    if (limitHit) {
+      return true;
+    }
     if (Date.now() - startTime > PLACEHOLDER_LIMITS.timeoutMs) {
       logger.warn(`Placeholder replacement timeout reached`);
       limitHit = true;
@@ -241,7 +246,9 @@ export async function startSecretsProxy(opts: SecretsProxyOptions): Promise<http
   const { registry, authToken } = opts;
 
   if (!authToken) {
-    throw new Error("authToken is required — the secrets proxy must not run without authentication");
+    throw new Error(
+      "authToken is required — the secrets proxy must not run without authentication",
+    );
   }
 
   const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -433,6 +440,20 @@ export async function startSecretsProxy(opts: SecretsProxyOptions): Promise<http
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // WebSocket relay endpoint — for Discord gateway and similar WSS connections
+  // ---------------------------------------------------------------------------
+  // Installs a /ws-relay upgrade handler on this HTTP server. The container
+  // connects via plain WS with X-WS-Target-URL pointing to wss://gateway.discord.gg/...
+  // The proxy opens the real WSS connection and relays frames, applying placeholder
+  // replacement on outbound text frames (the Discord IDENTIFY token lives there).
+  installWsRelayHandler(
+    server,
+    authToken,
+    (text) => replacePlaceholders(text, registry),
+    getCachedAllowlist,
+  );
+
   // Validate: exactly one of socketPath or port must be provided
   if (!opts.socketPath && !opts.port) {
     throw new Error("startSecretsProxy requires either socketPath (Linux/macOS) or port (Windows)");
@@ -446,13 +467,25 @@ export async function startSecretsProxy(opts: SecretsProxyOptions): Promise<http
     if (opts.socketPath) {
       // Unix socket mode (Linux/macOS) — no TCP exposure at all
       // Remove stale socket file from previous session (prevents EADDRINUSE)
-      try { fs.unlinkSync(opts.socketPath); } catch { /* doesn't exist, fine */ }
+      try {
+        fs.unlinkSync(opts.socketPath);
+      } catch {
+        /* doesn't exist, fine */
+      }
       server.listen(opts.socketPath, () => {
         // Restrict socket permissions to owner only (prevents other local users from connecting)
-        try { fs.chmodSync(opts.socketPath!, 0o600); } catch { /* best effort */ }
+        try {
+          fs.chmodSync(opts.socketPath!, 0o600);
+        } catch {
+          /* best effort */
+        }
         // Clean up socket file when server closes
         server.on("close", () => {
-          try { fs.unlinkSync(opts.socketPath!); } catch { /* already gone */ }
+          try {
+            fs.unlinkSync(opts.socketPath!);
+          } catch {
+            /* already gone */
+          }
         });
         logger.info(`Secrets Injection Proxy listening on socket: ${opts.socketPath}`);
         resolve(server);

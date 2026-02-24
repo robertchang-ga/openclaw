@@ -36,7 +36,7 @@ export type GatewayContainerOptions = {
 };
 
 const SECURE_NETWORK_NAME = "openclaw-secure-net";
-const RELAY_CONTAINER_NAME = "openclaw-relay";
+export const RELAY_CONTAINER_NAME = "openclaw-relay";
 const SOCAT_IMAGE = "alpine/socat";
 const RELAY_SOCKET_MOUNT = "/tmp/proxy.sock";
 

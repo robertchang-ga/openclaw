@@ -35,7 +35,9 @@ export interface SanitizedMounts {
  * - Original config with real channel tokens
  * - Original auth-profiles.json with real API keys
  */
-export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
+export async function prepareSanitizedMounts(opts?: {
+  proxyPort?: number;
+}): Promise<SanitizedMounts> {
   const homeDir = os.homedir();
   const openclawDir = path.join(homeDir, ".openclaw");
   const sanitizedDir = path.join(openclawDir, ".sanitized");
@@ -67,7 +69,7 @@ export async function prepareSanitizedMounts(): Promise<SanitizedMounts> {
         m.createConfigIO({ configPath }),
       );
       const rawConfig = loadResolvedConfig();
-      const config = sanitizeConfigSecrets(rawConfig, { force: true });
+      const config = sanitizeConfigSecrets(rawConfig, { force: true, proxyPort: opts?.proxyPort });
 
       const ext = path.extname(configPath);
       const sanitizedConfigPath = path.join(sanitizedDir, `openclaw${ext}`);

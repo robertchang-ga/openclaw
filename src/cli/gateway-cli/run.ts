@@ -391,7 +391,7 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
       gatewayLog.info("Preparing sanitized config mounts...");
       let sanitizedMounts;
       try {
-        sanitizedMounts = await prepareSanitizedMounts();
+        sanitizedMounts = await prepareSanitizedMounts({ proxyPort });
         gatewayLog.info(`Prepared ${sanitizedMounts.binds.length} bind mounts`);
       } catch (err) {
         gatewayLog.error(`Failed to prepare sanitized mounts: ${String(err)}`);
