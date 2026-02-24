@@ -44,7 +44,7 @@ async function getKokoroInstance(dtype: string): Promise<unknown> {
   kokoroInitPromise = (async () => {
     logVerbose("Kokoro TTS: initializing ONNX model (first call may download ~500MB)...");
     // Dynamic import to avoid bundling kokoro-js when not used.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    // @ts-expect-error -- kokoro-js is an optional runtime dependency
     const { KokoroTTS: KokoroTTSClass } = await import("kokoro-js");
     const instance = await KokoroTTSClass.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
       dtype,
