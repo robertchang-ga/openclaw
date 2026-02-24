@@ -183,9 +183,10 @@ function createOpusDecoder(): { decoder: OpusDecoder; name: string } | null {
 async function decodeOpusStream(stream: Readable): Promise<Buffer> {
   const selected = createOpusDecoder();
   if (!selected) {
+    logger.info("opus decode: no decoder available");
     return Buffer.alloc(0);
   }
-  logVoiceVerbose(`opus decoder: ${selected.name}`);
+  logger.info(`opus decode: using ${selected.name}`);
   const chunks: Buffer[] = [];
   try {
     for await (const chunk of stream) {
@@ -198,11 +199,11 @@ async function decodeOpusStream(stream: Readable): Promise<Buffer> {
       }
     }
   } catch (err) {
-    if (shouldLogVerbose()) {
-      logVerbose(`discord voice: opus decode failed: ${formatErrorMessage(err)}`);
-    }
+    logger.info(`opus decode: error: ${formatErrorMessage(err)}`);
   }
-  return chunks.length > 0 ? Buffer.concat(chunks) : Buffer.alloc(0);
+  const result = chunks.length > 0 ? Buffer.concat(chunks) : Buffer.alloc(0);
+  logger.info(`opus decode: ${chunks.length} chunks, ${result.length} bytes PCM`);
+  return result;
 }
 
 function estimateDurationSeconds(pcm: Buffer): number {
@@ -219,7 +220,9 @@ async function writeWavFile(pcm: Buffer): Promise<{ path: string; durationSecond
   const wav = buildWavBuffer(pcm);
   await fs.writeFile(filePath, wav);
   scheduleTempCleanup(tempDir);
-  return { path: filePath, durationSeconds: estimateDurationSeconds(pcm) };
+  const durationSeconds = estimateDurationSeconds(pcm);
+  logger.info(`wav write: ${filePath} (${wav.length} bytes, ${durationSeconds.toFixed(2)}s)`);
+  return { path: filePath, durationSeconds };
 }
 
 function scheduleTempCleanup(tempDir: string, delayMs: number = 30 * 60 * 1000): void {
@@ -538,6 +541,9 @@ export class DiscordVoiceManager {
       entry.player.stop(true);
     }
 
+    logger.info(
+      `subscribe: user ${userId}, silence timeout ${SILENCE_DURATION_MS}ms`,
+    );
     const stream = entry.connection.receiver.subscribe(userId, {
       end: {
         behavior: EndBehaviorType.AfterSilence,
@@ -558,8 +564,8 @@ export class DiscordVoiceManager {
       }
       const { path: wavPath, durationSeconds } = await writeWavFile(pcm);
       if (durationSeconds < MIN_SEGMENT_SECONDS) {
-        logVoiceVerbose(
-          `capture too short (${durationSeconds.toFixed(2)}s): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+        logger.info(
+          `capture too short (${durationSeconds.toFixed(2)}s < ${MIN_SEGMENT_SECONDS}s min): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
         );
         return;
       }
