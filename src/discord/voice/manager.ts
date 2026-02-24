@@ -244,8 +244,13 @@ async function transcribeAudio(params: {
   };
   const attachments = normalizeMediaAttachments(ctx);
   if (attachments.length === 0) {
+    logger.info(`transcribe: no attachments for ${params.filePath}`);
     return undefined;
   }
+  const audioConfig = params.cfg.tools?.media?.audio;
+  logger.info(
+    `transcribe: ${attachments.length} attachment(s), audio enabled=${audioConfig?.enabled}, models=${JSON.stringify(audioConfig?.models?.length ?? 0)}`,
+  );
   const cache = createMediaAttachmentCache(attachments);
   const providerRegistry = buildProviderRegistry();
   try {
@@ -257,8 +262,11 @@ async function transcribeAudio(params: {
       media: attachments,
       agentDir: resolveAgentDir(params.cfg, params.agentId),
       providerRegistry,
-      config: params.cfg.tools?.media?.audio,
+      config: audioConfig,
     });
+    logger.info(
+      `transcribe: decision=${result.decision.outcome}, outputs=${result.outputs.length}`,
+    );
     const output = result.outputs.find((entry) => entry.kind === "audio.transcription");
     const text = output?.text?.trim();
     return text || undefined;
