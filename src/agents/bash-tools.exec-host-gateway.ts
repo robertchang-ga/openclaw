@@ -57,6 +57,14 @@ export type ProcessGatewayAllowlistResult = {
 export async function processGatewayAllowlist(
   params: ProcessGatewayAllowlistParams,
 ): Promise<ProcessGatewayAllowlistResult> {
+  // In secure (container) mode, gateway commands execute inside a fully
+  // sandboxed Docker container with no direct internet access (internal
+  // network, domain-allowlisted proxy). Skip the approval flow entirely —
+  // the container IS the security boundary.
+  if (process.env.OPENCLAW_SECURE_MODE === "1") {
+    return {};
+  }
+
   const approvals = resolveExecApprovals(params.agentId, {
     security: params.security,
     ask: params.ask,
