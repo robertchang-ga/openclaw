@@ -9,6 +9,15 @@ RUN corepack enable
 WORKDIR /app
 RUN chown node:node /app
 
+# Install native opus library for Discord voice audio decoding.
+# @discordjs/opus compiles a native addon during pnpm install and needs
+# libopus-dev + build tools present at install time.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      libopus-dev python3 make g++ && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
 ARG OPENCLAW_DOCKER_APT_PACKAGES=""
 RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
       apt-get update && \
