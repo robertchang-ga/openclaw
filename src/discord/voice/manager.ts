@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { RealtimeSTT, resample48kStereoTo16kMono } from "./realtime-stt.js";
 import { ChannelType, type Client, ReadyListener } from "@buape/carbon";
 import type { VoicePlugin } from "@buape/carbon/voice";
 import {
@@ -45,9 +46,44 @@ const SAMPLE_RATE = 48_000;
 const CHANNELS = 2;
 const BIT_DEPTH = 16;
 const MIN_SEGMENT_SECONDS = 0.35;
-const SILENCE_DURATION_MS = 1_000;
 const PLAYBACK_READY_TIMEOUT_MS = 15_000;
 const SPEAKING_READY_TIMEOUT_MS = 60_000;
+
+/** Resolve the Speaches WebSocket URL for realtime STT. */
+function resolveSpeachesRealtimeUrl(cfg: OpenClawConfig): string {
+  // In Docker secure mode, use the Docker-internal hostname
+  if (process.env.OPENCLAW_SECURE_MODE) {
+    return "ws://speaches:8000/v1/realtime";
+  }
+  // Try to derive from the audio provider baseUrl config
+  const audioBaseUrl = cfg.tools?.media?.audio?.baseUrl?.trim();
+  if (audioBaseUrl) {
+    try {
+      const parsed = new URL(audioBaseUrl);
+      parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+      // Replace /v1 suffix with /v1/realtime
+      parsed.pathname = parsed.pathname.replace(/\/v1\/?$/, "/v1/realtime");
+      if (!parsed.pathname.includes("/v1/realtime")) {
+        parsed.pathname = "/v1/realtime";
+      }
+      return parsed.toString().replace(/\/$/, "");
+    } catch { /* fall through */ }
+  }
+  // Default: local Speaches on host port
+  return "ws://localhost:8090/v1/realtime";
+}
+
+/** Resolve the Whisper model name from config. */
+function resolveWhisperModel(cfg: OpenClawConfig): string {
+  // Check audio models config
+  const audioModels = cfg.tools?.media?.audio?.models;
+  if (audioModels && audioModels.length > 0) {
+    const first = audioModels[0];
+    if (typeof first === "object" && first.model) return first.model;
+    if (typeof first === "string") return first;
+  }
+  return process.env.SPEACHES_MODEL || "Systran/faster-distil-whisper-large-v3";
+}
 
 const logger = createSubsystemLogger("discord/voice");
 
@@ -72,6 +108,7 @@ type VoiceSessionEntry = {
   playbackQueue: Promise<void>;
   processingQueue: Promise<void>;
   activeSpeakers: Set<string>;
+  realtimeSTT: RealtimeSTT | null;
   stop: () => void;
 };
 
@@ -444,15 +481,85 @@ export class DiscordVoiceManager {
       playbackQueue: Promise.resolve(),
       processingQueue: Promise.resolve(),
       activeSpeakers: new Set(),
+      realtimeSTT: null,
       stop: () => {
+        entry.realtimeSTT?.destroy();
         player.stop();
         connection.destroy();
       },
     };
 
+    // ─── Realtime STT setup ──────────────────────────────────────
+    const wsUrl = resolveSpeachesRealtimeUrl(this.params.cfg);
+    const whisperModel = resolveWhisperModel(this.params.cfg);
+    const stt = new RealtimeSTT({
+      url: wsUrl,
+      model: whisperModel,
+      language: this.params.cfg.tools?.media?.audio?.language,
+      onTranscript: (text: string) => {
+        logger.info(
+          `realtime transcript (${text.length} chars): guild ${guildId} channel ${channelId}`,
+        );
+        this.enqueueProcessing(entry, async () => {
+          await this.processTranscript({ entry, transcript: text });
+        });
+      },
+      onSpeechStart: () => {
+        // Interrupt current playback when user starts speaking
+        if (entry.player.state.status === AudioPlayerStatus.Playing) {
+          entry.player.stop(true);
+        }
+      },
+    });
+    entry.realtimeSTT = stt;
+
+    // Connect the realtime STT WebSocket
+    stt.connect().catch((err) => {
+      logger.warn(`discord voice: realtime STT connect failed: ${formatErrorMessage(err)}, falling back to batch mode`);
+    });
+
+    // Pipe all incoming audio to the realtime STT
+    const opusDecoder = createOpusDecoder();
+    if (opusDecoder) {
+      logger.info(`voice: opus decoder for realtime: ${opusDecoder.name}`);
+    }
+
     const speakingHandler = (userId: string) => {
-      void this.handleSpeakingStart(entry, userId).catch((err) => {
-        logger.warn(`discord voice: capture failed: ${formatErrorMessage(err)}`);
+      if (this.botUserId && userId === this.botUserId) return;
+      if (entry.activeSpeakers.has(userId)) return;
+      entry.activeSpeakers.add(userId);
+
+      logger.info(`capture start: guild ${guildId} channel ${channelId} user ${userId}`);
+
+      // Subscribe to this user's audio stream
+      const stream = connection.receiver.subscribe(userId, {
+        end: {
+          behavior: EndBehaviorType.AfterSilence,
+          duration: 2_000, // Keep stream alive longer; VAD handles segmentation
+        },
+      });
+
+      stream.on("data", (chunk: Buffer) => {
+        if (!chunk || chunk.length === 0 || !opusDecoder || !stt.isConnected) return;
+        try {
+          const pcm48k = opusDecoder.decoder.decode(chunk);
+          if (pcm48k && pcm48k.length > 0) {
+            const pcm16k = resample48kStereoTo16kMono(Buffer.from(pcm48k));
+            stt.feedAudio(pcm16k);
+          }
+        } catch {
+          // Decode errors on individual packets are normal (silence frames, etc.)
+        }
+      });
+
+      stream.on("end", () => {
+        entry.activeSpeakers.delete(userId);
+        logger.info(`capture end: guild ${guildId} channel ${channelId} user ${userId}`);
+      });
+
+      stream.on("error", (err) => {
+        entry.activeSpeakers.delete(userId);
+        logger.warn(`discord voice: receive error for user ${userId}: ${formatErrorMessage(err)}`);
       });
     };
 
@@ -465,11 +572,13 @@ export class DiscordVoiceManager {
         ]);
       } catch {
         this.sessions.delete(guildId);
+        entry.realtimeSTT?.destroy();
         connection.destroy();
       }
     });
     connection.on(VoiceConnectionStatus.Destroyed, () => {
       this.sessions.delete(guildId);
+      entry.realtimeSTT?.destroy();
     });
 
     player.on("error", (err) => {
@@ -525,90 +634,19 @@ export class DiscordVoiceManager {
       .catch((err) => logger.warn(`discord voice: playback failed: ${formatErrorMessage(err)}`));
   }
 
-  private async handleSpeakingStart(entry: VoiceSessionEntry, userId: string) {
-    if (!userId || entry.activeSpeakers.has(userId)) {
-      return;
-    }
-    if (this.botUserId && userId === this.botUserId) {
-      return;
-    }
-
-    entry.activeSpeakers.add(userId);
-    logger.info(
-      `capture start: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
-    );
-    if (entry.player.state.status === AudioPlayerStatus.Playing) {
-      entry.player.stop(true);
-    }
-
-    logger.info(
-      `subscribe: user ${userId}, silence timeout ${SILENCE_DURATION_MS}ms`,
-    );
-    const stream = entry.connection.receiver.subscribe(userId, {
-      end: {
-        behavior: EndBehaviorType.AfterSilence,
-        duration: SILENCE_DURATION_MS,
-      },
-    });
-    stream.on("error", (err) => {
-      logger.warn(`discord voice: receive error: ${formatErrorMessage(err)}`);
-    });
-
-    try {
-      const pcm = await decodeOpusStream(stream);
-      if (pcm.length === 0) {
-        logger.info(
-          `capture empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
-        );
-        return;
-      }
-      const { path: wavPath, durationSeconds } = await writeWavFile(pcm);
-      if (durationSeconds < MIN_SEGMENT_SECONDS) {
-        logger.info(
-          `capture too short (${durationSeconds.toFixed(2)}s < ${MIN_SEGMENT_SECONDS}s min): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
-        );
-        return;
-      }
-      logger.info(
-        `capture ready (${durationSeconds.toFixed(2)}s): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
-      );
-      this.enqueueProcessing(entry, async () => {
-        await this.processSegment({ entry, wavPath, userId, durationSeconds });
-      });
-    } finally {
-      entry.activeSpeakers.delete(userId);
-    }
-  }
-
-  private async processSegment(params: {
+  /**
+   * Process a transcript received from the realtime STT WebSocket.
+   */
+  private async processTranscript(params: {
     entry: VoiceSessionEntry;
-    wavPath: string;
-    userId: string;
-    durationSeconds: number;
+    transcript: string;
   }) {
-    const { entry, wavPath, userId, durationSeconds } = params;
-    logger.info(
-      `segment processing (${durationSeconds.toFixed(2)}s): guild ${entry.guildId} channel ${entry.channelId}`,
-    );
-    const transcript = await transcribeAudio({
-      cfg: this.params.cfg,
-      agentId: entry.route.agentId,
-      filePath: wavPath,
-    });
-    if (!transcript) {
-      logger.info(
-        `transcription empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
-      );
-      return;
-    }
-    logger.info(
-      `transcription ok (${transcript.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
-    );
+    const { entry, transcript } = params;
+    if (!transcript || transcript.length < 2) return;
 
-    const speakerLabel = await this.resolveSpeakerLabel(entry.guildId, userId);
-    const prompt = speakerLabel ? `${speakerLabel}: ${transcript}` : transcript;
+    const prompt = transcript;
     logger.info(
-      `speaker: ${speakerLabel ?? "(unknown)"}, prompt: "${prompt.slice(0, 80)}${prompt.length > 80 ? "..." : ""}"`,
+      `prompt: "${prompt.slice(0, 80)}${prompt.length > 80 ? "..." : ""}"`,
     );
 
     // Resolve TTS config upfront to determine streaming path.
@@ -755,7 +793,7 @@ export class DiscordVoiceManager {
 
         if (sentenceCount === 0) {
           logger.info(
-            `reply empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+            `reply empty: guild ${entry.guildId} channel ${entry.channelId}`,
           );
         } else {
           logger.info(
@@ -786,7 +824,7 @@ export class DiscordVoiceManager {
 
       if (!replyText) {
         logger.info(
-          `reply empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+          `reply empty: guild ${entry.guildId} channel ${entry.channelId}`,
         );
         return;
       }
@@ -798,7 +836,7 @@ export class DiscordVoiceManager {
       const speakText = directive.overrides.ttsText ?? directive.cleanedText.trim();
       if (!speakText) {
         logger.info(
-          `tts skipped (empty): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+          `tts skipped (empty): guild ${entry.guildId} channel ${entry.channelId}`,
         );
         return;
       }
