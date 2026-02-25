@@ -167,5 +167,35 @@ export function sanitizeConfigSecrets(
     }
   }
 
+  // Rewrite localhost URLs in plugin configs to Docker-internal hostnames.
+  // In secure mode, localhost inside the container refers to the container
+  // itself, not the host. Sidecar services (cognee, speaches) are on
+  // openclaw-secure-net and reachable by container name.
+  const SIDECAR_PORT_MAP: Record<string, { hostname: string; containerPort: string }> = {
+    "8000": { hostname: "cognee", containerPort: "8000" },
+    "8090": { hostname: "speaches", containerPort: "8000" },
+  };
+  if (sanitized.plugins?.entries) {
+    for (const entry of Object.values(sanitized.plugins.entries)) {
+      const rec = entry as Record<string, unknown> | undefined;
+      if (rec?.baseUrl && typeof rec.baseUrl === "string") {
+        try {
+          const parsed = new URL(rec.baseUrl);
+          if (
+            (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") &&
+            SIDECAR_PORT_MAP[parsed.port]
+          ) {
+            const mapping = SIDECAR_PORT_MAP[parsed.port];
+            parsed.hostname = mapping.hostname;
+            parsed.port = mapping.containerPort;
+            rec.baseUrl = parsed.toString().replace(/\/$/, "");
+          }
+        } catch {
+          /* invalid URL, leave unchanged */
+        }
+      }
+    }
+  }
+
   return sanitized;
 }

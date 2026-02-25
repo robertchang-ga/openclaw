@@ -61,6 +61,9 @@ services:
       - REQUIRE_AUTHENTICATION=false
     volumes:
       - cognee_data:/app/cognee/.cognee_system
+    networks:
+      - default
+      - openclaw-secure-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
