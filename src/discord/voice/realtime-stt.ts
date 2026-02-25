@@ -117,8 +117,10 @@ export class RealtimeSTT {
         clearTimeout(connectTimeout);
 
         // Configure session with server-side VAD.
-        // Transcription-only mode is already set via intent=transcription in the URL.
-        // The session.update just configures VAD and transcription model.
+        // intent=transcription in the URL sets transcription-only mode.
+        // create_response: false explicitly disables LLM response generation
+        // as a fallback in case the installed Speaches version doesn't support
+        // the intent query param (older versions).
         this.sendEvent({
           type: "session.update",
           session: {
@@ -130,6 +132,7 @@ export class RealtimeSTT {
               threshold: 0.5,
               prefix_padding_ms: 300,
               silence_duration_ms: 500,
+              create_response: false,
             },
           },
         });
