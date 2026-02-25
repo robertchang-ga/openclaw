@@ -87,7 +87,17 @@ export class RealtimeSTT {
   async connect(): Promise<void> {
     if (this.destroyed) return;
 
-    const wsUrl = `${this.config.url}?model=${encodeURIComponent(this.config.model)}`;
+    // Speaches uses query params for transcription-only mode:
+    // intent=transcription disables response generation
+    // model specifies the Whisper model
+    // language is optional ISO-639-1 hint
+    const params = new URLSearchParams();
+    params.set("model", this.config.model);
+    params.set("intent", "transcription");
+    if (this.config.language) {
+      params.set("language", this.config.language);
+    }
+    const wsUrl = `${this.config.url}?${params.toString()}`;
     logger.info(`realtime-stt: connecting to ${wsUrl}`);
 
     return new Promise<void>((resolve, reject) => {
@@ -106,16 +116,14 @@ export class RealtimeSTT {
         this.connected = true;
         clearTimeout(connectTimeout);
 
-        // Configure session for transcription-only mode with server-side VAD.
-        // type: "transcription" prevents Speaches from trying to generate
-        // an LLM response after transcription (which causes "Not Found" errors).
+        // Configure session with server-side VAD.
+        // Transcription-only mode is already set via intent=transcription in the URL.
+        // The session.update just configures VAD and transcription model.
         this.sendEvent({
           type: "session.update",
           session: {
-            type: "transcription",
             input_audio_transcription: {
               model: this.config.model,
-              language: this.config.language,
             },
             turn_detection: {
               type: "server_vad",
