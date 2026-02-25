@@ -171,6 +171,23 @@ export class RealtimeSTT {
   }
 
   /**
+   * Send silence frames to flush the VAD.
+   * Call this when the Discord audio stream ends so Speaches' VAD can
+   * detect the end of speech (it needs actual silence, not just absence of data).
+   */
+  flushSilence(durationMs: number = 1000): void {
+    if (!this.ws || !this.connected) return;
+    // 16kHz mono PCM = 16000 samples/sec × 2 bytes/sample = 32000 bytes/sec
+    const bytesNeeded = Math.ceil((16000 * 2 * durationMs) / 1000);
+    const silence = Buffer.alloc(bytesNeeded); // all zeros = silence
+    this.sendEvent({
+      type: "input_audio_buffer.append",
+      audio: silence.toString("base64"),
+    });
+    logger.info(`realtime-stt: flushed ${durationMs}ms silence (${bytesNeeded} bytes)`);
+  }
+
+  /**
    * Disconnect and clean up.
    */
   destroy(): void {
@@ -252,7 +269,12 @@ export class RealtimeSTT {
       }
 
       default:
-        if (event.type && !event.type.startsWith("response.")) {
+        if (
+          event.type &&
+          !event.type.startsWith("response.") &&
+          event.type !== "input_audio_buffer.committed" &&
+          event.type !== "conversation.item.created"
+        ) {
           logger.info(`realtime-stt: unhandled event: ${event.type}`);
         }
         break;

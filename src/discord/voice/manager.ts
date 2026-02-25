@@ -555,6 +555,8 @@ export class DiscordVoiceManager {
       stream.on("end", () => {
         entry.activeSpeakers.delete(userId);
         logger.info(`capture end: guild ${guildId} channel ${channelId} user ${userId}`);
+        // Send silence so Speaches' VAD can detect end-of-speech
+        stt.flushSilence(1000);
       });
 
       stream.on("error", (err) => {
