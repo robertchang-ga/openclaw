@@ -44,10 +44,9 @@ async function getKokoroInstance(dtype: string): Promise<unknown> {
   kokoroInitPromise = (async () => {
     logVerbose("Kokoro TTS: initializing ONNX model (first call may download ~500MB)...");
     // Dynamic import to avoid bundling kokoro-js when not used.
-    // @ts-expect-error -- kokoro-js is an optional runtime dependency
     const { KokoroTTS: KokoroTTSClass } = await import("kokoro-js");
     const instance = await KokoroTTSClass.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
-      dtype,
+      dtype: dtype as "q8" | "fp32" | "fp16" | "q4" | "q4f16",
     });
     kokoroInstance = instance;
     logVerbose("Kokoro TTS: model loaded successfully.");
