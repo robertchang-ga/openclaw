@@ -18,18 +18,19 @@ const logger = createSubsystemLogger("discord/voice");
 // ---------------------------------------------------------------------------
 
 /**
- * Resample 48kHz stereo S16LE PCM → 16kHz mono S16LE PCM.
- * Simple decimation: average L+R channels, take every 3rd sample.
+ * Resample 48kHz stereo S16LE PCM → 24kHz mono S16LE PCM.
+ * Simple decimation: average L+R channels, take every 2nd sample.
+ * Speaches realtime API expects 24kHz input (resamples to 16kHz internally).
  */
-export function resample48kStereoTo16kMono(input: Buffer): Buffer {
+export function resample48kStereoTo24kMono(input: Buffer): Buffer {
   const samples = input.length / 2; // 16-bit = 2 bytes per sample
   const stereoSamples = samples / 2; // 2 channels per frame
-  // Output: one channel, every 3rd frame → stereoSamples / 3
-  const outFrames = Math.floor(stereoSamples / 3);
+  // Output: one channel, every 2nd frame → stereoSamples / 2
+  const outFrames = Math.floor(stereoSamples / 2);
   const output = Buffer.alloc(outFrames * 2); // 16-bit mono
 
   for (let i = 0; i < outFrames; i++) {
-    const srcFrame = i * 3; // source frame index (in stereo frames)
+    const srcFrame = i * 2; // source frame index (in stereo frames)
     const srcOffset = srcFrame * 4; // 4 bytes per stereo frame (2ch × 2bytes)
 
     const left = input.readInt16LE(srcOffset);
@@ -121,18 +122,16 @@ export class RealtimeSTT {
         // create_response: false explicitly disables LLM response generation
         // as a fallback in case the installed Speaches version doesn't support
         // the intent query param (older versions).
+        // Disable server-side VAD — we use Discord's own voice activity
+        // detection and manually commit the audio buffer when the user
+        // stops speaking. This eliminates ~1.5s of double-VAD latency.
         this.sendEvent({
           type: "session.update",
           session: {
             input_audio_transcription: {
               model: this.config.model,
             },
-            turn_detection: {
-              type: "server_vad",
-              threshold: 0.5,
-              silence_duration_ms: 500,
-              create_response: false,
-            },
+            turn_detection: null,
           },
         });
 
@@ -168,33 +167,28 @@ export class RealtimeSTT {
   }
 
   /**
-   * Feed raw PCM audio (16kHz mono S16LE) to Speaches.
-   * Call resample48kStereoTo16kMono() before this if coming from Discord.
+   * Feed raw PCM audio (24kHz mono S16LE) to Speaches.
+   * Call resample48kStereoTo24kMono() before this if coming from Discord.
    */
-  feedAudio(pcm16kMono: Buffer): void {
+  feedAudio(pcm24kMono: Buffer): void {
     if (!this.ws || !this.connected) return;
 
     this.sendEvent({
       type: "input_audio_buffer.append",
-      audio: pcm16kMono.toString("base64"),
+      audio: pcm24kMono.toString("base64"),
     });
   }
 
   /**
-   * Send silence frames to flush the VAD.
-   * Call this when the Discord audio stream ends so Speaches' VAD can
-   * detect the end of speech (it needs actual silence, not just absence of data).
+   * Commit the accumulated audio buffer for transcription.
+   * Call this when Discord signals the user stopped speaking.
+   * Server-side VAD is disabled; we rely on Discord's own VAD for
+   * speech boundary detection and trigger transcription immediately.
    */
-  flushSilence(durationMs: number = 1000): void {
+  commitAudioBuffer(): void {
     if (!this.ws || !this.connected) return;
-    // 16kHz mono PCM = 16000 samples/sec × 2 bytes/sample = 32000 bytes/sec
-    const bytesNeeded = Math.ceil((16000 * 2 * durationMs) / 1000);
-    const silence = Buffer.alloc(bytesNeeded); // all zeros = silence
-    this.sendEvent({
-      type: "input_audio_buffer.append",
-      audio: silence.toString("base64"),
-    });
-    logger.info(`realtime-stt: flushed ${durationMs}ms silence (${bytesNeeded} bytes)`);
+    this.sendEvent({ type: "input_audio_buffer.commit" });
+    logger.info("realtime-stt: committed audio buffer for transcription");
   }
 
   /**

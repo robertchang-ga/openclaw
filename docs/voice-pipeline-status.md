@@ -101,10 +101,12 @@ The `docker-compose.yml` references `image: speaches:patched` (local image). If 
 ### 10. ✅ OPENAI_BASE_URL for Internal Self-Call
 - Added `OPENAI_BASE_URL=http://localhost:8000/v1` to Speaches container environment
 
-### 11. 🟡 ASGI Middleware Fix (IN PROGRESS)
+### 11. ✅ ASGI Middleware Fix
 - Local patch applied via `scripts/build-speaches-patched.sh`
 - Fixed WORKDIR ownership: Docker creates `WORKDIR` as root; added `chown` so `ubuntu` user can create `.venv`
-- Ready for re-build and testing
+- Fixed volume mount: `/home/ubuntu/.cache/huggingface` (was `/root/...`)
+- Model download persists across container recreations
+- End-to-end voice pipeline verified working ✅
 
 ## Remaining Issues
 

@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import { RealtimeSTT, resample48kStereoTo16kMono } from "./realtime-stt.js";
+import { RealtimeSTT, resample48kStereoTo24kMono } from "./realtime-stt.js";
 import { ChannelType, type Client, ReadyListener } from "@buape/carbon";
 import type { VoicePlugin } from "@buape/carbon/voice";
 import {
@@ -544,8 +544,8 @@ export class DiscordVoiceManager {
         try {
           const pcm48k = opusDecoder.decoder.decode(chunk);
           if (pcm48k && pcm48k.length > 0) {
-            const pcm16k = resample48kStereoTo16kMono(Buffer.from(pcm48k));
-            stt.feedAudio(pcm16k);
+            const pcm24k = resample48kStereoTo24kMono(Buffer.from(pcm48k));
+            stt.feedAudio(pcm24k);
           }
         } catch {
           // Decode errors on individual packets are normal (silence frames, etc.)
@@ -555,8 +555,8 @@ export class DiscordVoiceManager {
       stream.on("end", () => {
         entry.activeSpeakers.delete(userId);
         logger.info(`capture end: guild ${guildId} channel ${channelId} user ${userId}`);
-        // Send silence so Speaches' VAD can detect end-of-speech
-        stt.flushSilence(1000);
+        // Commit the audio buffer so Speaches transcribes immediately
+        stt.commitAudioBuffer();
       });
 
       stream.on("error", (err) => {

@@ -79,6 +79,7 @@ services:
       - "127.0.0.1:${SPEACHES_PORT:-8090}:8000"
     environment:
       - WHISPER__MODEL=${SPEACHES_MODEL:-Systran/faster-distil-whisper-large-v3}
+      - SPEACHES__STT_MODEL_TTL=-1
       - OPENAI_BASE_URL=http://localhost:8000/v1
       - OPENAI_API_KEY=not-needed
     networks:
