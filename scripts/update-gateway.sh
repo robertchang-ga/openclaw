@@ -14,7 +14,7 @@ echo "==> Building TypeScript..."
 pnpm build
 
 echo "==> Building Docker image..."
-docker build -t openclaw-gateway .
+docker build --no-cache -t openclaw-gateway .
 
 echo "==> Installing CLI globally..."
 npm install -g .
