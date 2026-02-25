@@ -106,11 +106,13 @@ export class RealtimeSTT {
         this.connected = true;
         clearTimeout(connectTimeout);
 
-        // Configure session for transcription-only mode with server-side VAD
+        // Configure session for transcription-only mode with server-side VAD.
+        // type: "transcription" prevents Speaches from trying to generate
+        // an LLM response after transcription (which causes "Not Found" errors).
         this.sendEvent({
           type: "session.update",
           session: {
-            input_audio_format: "pcm16",
+            type: "transcription",
             input_audio_transcription: {
               model: this.config.model,
               language: this.config.language,
