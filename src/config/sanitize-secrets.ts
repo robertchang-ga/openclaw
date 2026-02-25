@@ -167,5 +167,26 @@ export function sanitizeConfigSecrets(
     }
   }
 
+  // Inject Docker-internal URLs into sidecar plugin configs.
+  // Plugin entries use { config: Record<string, unknown> } for plugin-specific
+  // settings. The plugin reads config.baseUrl via api.pluginConfig.baseUrl.
+  // In secure mode, inject the Docker-internal hostname so the plugin can
+  // reach the sidecar service on the container network.
+  const SIDECAR_PLUGIN_URLS: Record<string, string> = {
+    "memory-cognee": "http://cognee:8000",
+  };
+  if (sanitized.plugins?.entries) {
+    for (const [pluginId, entry] of Object.entries(sanitized.plugins.entries)) {
+      const dockerUrl = SIDECAR_PLUGIN_URLS[pluginId];
+      if (!dockerUrl) continue;
+      // Inject into config sub-object (not entry-level, which Zod rejects)
+      const rec = entry as { config?: Record<string, unknown> };
+      if (!rec.config) rec.config = {};
+      if (!rec.config.baseUrl) {
+        rec.config.baseUrl = dockerUrl;
+      }
+    }
+  }
+
   return sanitized;
 }
