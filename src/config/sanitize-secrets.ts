@@ -167,48 +167,5 @@ export function sanitizeConfigSecrets(
     }
   }
 
-  // Rewrite localhost URLs in plugin configs to Docker-internal hostnames.
-  // In secure mode, localhost inside the container refers to the container
-  // itself, not the host. Sidecar services (cognee, speaches) are on
-  // openclaw-secure-net and reachable by container name.
-  const SIDECAR_PORT_MAP: Record<string, { hostname: string; containerPort: string }> = {
-    "8000": { hostname: "cognee", containerPort: "8000" },
-    "8090": { hostname: "speaches", containerPort: "8000" },
-  };
-
-  // Known sidecar plugins and their default localhost ports.
-  // If the plugin config has no baseUrl, inject the Docker-internal URL.
-  const SIDECAR_PLUGIN_DEFAULTS: Record<string, string> = {
-    "memory-cognee": "http://cognee:8000",
-  };
-
-  if (sanitized.plugins?.entries) {
-    for (const [pluginId, entry] of Object.entries(sanitized.plugins.entries)) {
-      const rec = entry as Record<string, unknown> | undefined;
-      if (!rec) continue;
-
-      if (rec.baseUrl && typeof rec.baseUrl === "string") {
-        // Rewrite existing localhost URLs
-        try {
-          const parsed = new URL(rec.baseUrl);
-          if (
-            (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") &&
-            SIDECAR_PORT_MAP[parsed.port]
-          ) {
-            const mapping = SIDECAR_PORT_MAP[parsed.port];
-            parsed.hostname = mapping.hostname;
-            parsed.port = mapping.containerPort;
-            rec.baseUrl = parsed.toString().replace(/\/$/, "");
-          }
-        } catch {
-          /* invalid URL, leave unchanged */
-        }
-      } else if (SIDECAR_PLUGIN_DEFAULTS[pluginId]) {
-        // Inject baseUrl for known sidecar plugins that use localhost defaults
-        rec.baseUrl = SIDECAR_PLUGIN_DEFAULTS[pluginId];
-      }
-    }
-  }
-
   return sanitized;
 }

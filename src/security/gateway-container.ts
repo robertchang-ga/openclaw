@@ -417,6 +417,9 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
     "LOGNAME=node",
     "-e",
     "PWD=/app",
+    // Sidecar service URLs (Docker-internal hostnames on openclaw-secure-net)
+    "-e",
+    "COGNEE_BASE_URL=http://cognee:8000",
     "-e",
     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     "-e",

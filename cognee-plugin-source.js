@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
-const DEFAULT_BASE_URL = "http://localhost:8000";
+const DEFAULT_BASE_URL = process.env.COGNEE_BASE_URL || "http://localhost:8000";
 const DEFAULT_DATASET_NAME = "openclaw";
 const DEFAULT_SEARCH_TYPE = "TEMPORAL";
 const DEFAULT_MAX_RESULTS = 6;
