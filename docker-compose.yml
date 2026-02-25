@@ -92,7 +92,7 @@ services:
               count: 1
               capabilities: [gpu]
     volumes:
-      - speaches_models:/root/.cache/huggingface
+      - speaches_models:/home/ubuntu/.cache/huggingface
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
