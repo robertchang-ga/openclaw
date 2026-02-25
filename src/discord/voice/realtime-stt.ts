@@ -184,15 +184,22 @@ export class RealtimeSTT {
   }
 
   /**
-   * Commit the accumulated audio buffer for transcription.
-   * Call this when Discord signals the user stopped speaking.
-   * This is the primary transcription trigger; server-side VAD acts
-   * as a backup with a short silence_duration_ms (200ms).
+   * Send a short silence flush so the server-side VAD detects end-of-speech.
+   * With silence_duration_ms: 200, we send 300ms of silence as a margin.
+   * This avoids the race condition that occurs when both manual commit and
+   * VAD commit fire for the same buffer (causing AssertionError in Speaches).
    */
-  commitAudioBuffer(): void {
+  flushSilence(): void {
     if (!this.ws || !this.connected) return;
-    this.sendEvent({ type: "input_audio_buffer.commit" });
-    logger.info("realtime-stt: committed audio buffer for transcription");
+    // 24kHz mono PCM = 24000 samples/sec × 2 bytes/sample = 48000 bytes/sec
+    const durationMs = 300;
+    const bytesNeeded = Math.ceil((24000 * 2 * durationMs) / 1000);
+    const silence = Buffer.alloc(bytesNeeded); // all zeros = silence
+    this.sendEvent({
+      type: "input_audio_buffer.append",
+      audio: silence.toString("base64"),
+    });
+    logger.info(`realtime-stt: flushed ${durationMs}ms silence (${bytesNeeded} bytes)`);
   }
 
   /**

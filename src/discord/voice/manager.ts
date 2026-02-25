@@ -555,8 +555,8 @@ export class DiscordVoiceManager {
       stream.on("end", () => {
         entry.activeSpeakers.delete(userId);
         logger.info(`capture end: guild ${guildId} channel ${channelId} user ${userId}`);
-        // Commit the audio buffer so Speaches transcribes immediately
-        stt.commitAudioBuffer();
+        // Flush short silence so server VAD detects end-of-speech
+        stt.flushSilence();
       });
 
       stream.on("error", (err) => {
