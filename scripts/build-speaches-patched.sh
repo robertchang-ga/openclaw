@@ -104,7 +104,12 @@ COPY --chown=ubuntu . .
 RUN --mount=type=cache,target=/root/.cache/uv \\
     uv sync --frozen --compile-bytecode --no-dev'''
 
-new_uv_install = '''COPY --chown=ubuntu pyproject.toml uv.lock ./
+# Fix WORKDIR ownership: Docker creates WORKDIR dirs as root regardless of USER.
+# With BuildKit --mount removed, ubuntu needs write access to create .venv.
+new_uv_install = '''USER root
+RUN chown -R ubuntu:ubuntu /home/ubuntu/speaches
+USER ubuntu
+COPY --chown=ubuntu pyproject.toml uv.lock ./
 RUN uv sync --frozen --compile-bytecode --no-install-project --no-dev
 COPY --chown=ubuntu . .
 RUN uv sync --frozen --compile-bytecode --no-dev'''

@@ -103,7 +103,8 @@ The `docker-compose.yml` references `image: speaches:patched` (local image). If 
 
 ### 11. 🟡 ASGI Middleware Fix (IN PROGRESS)
 - Local patch applied via `scripts/build-speaches-patched.sh`
-- Awaiting build and testing
+- Fixed WORKDIR ownership: Docker creates `WORKDIR` as root; added `chown` so `ubuntu` user can create `.venv`
+- Ready for re-build and testing
 
 ## Remaining Issues
 
