@@ -117,21 +117,25 @@ export class RealtimeSTT {
         this.connected = true;
         clearTimeout(connectTimeout);
 
-        // Configure session with server-side VAD.
+        // Configure session for transcription-only mode.
         // intent=transcription in the URL sets transcription-only mode.
-        // create_response: false explicitly disables LLM response generation
-        // as a fallback in case the installed Speaches version doesn't support
-        // the intent query param (older versions).
-        // Disable server-side VAD — we use Discord's own voice activity
-        // detection and manually commit the audio buffer when the user
-        // stops speaking. This eliminates ~1.5s of double-VAD latency.
+        // We use a short silence_duration_ms so server-side VAD triggers
+        // quickly as a backup. The primary trigger is our manual
+        // commitAudioBuffer() when Discord signals end-of-speech.
+        // Note: Speaches rejects turn_detection: null, so we keep
+        // VAD enabled with minimal latency parameters.
         this.sendEvent({
           type: "session.update",
           session: {
             input_audio_transcription: {
               model: this.config.model,
             },
-            turn_detection: null,
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.5,
+              silence_duration_ms: 200,
+              create_response: false,
+            },
           },
         });
 
@@ -182,8 +186,8 @@ export class RealtimeSTT {
   /**
    * Commit the accumulated audio buffer for transcription.
    * Call this when Discord signals the user stopped speaking.
-   * Server-side VAD is disabled; we rely on Discord's own VAD for
-   * speech boundary detection and trigger transcription immediately.
+   * This is the primary transcription trigger; server-side VAD acts
+   * as a backup with a short silence_duration_ms (200ms).
    */
   commitAudioBuffer(): void {
     if (!this.ws || !this.connected) return;
