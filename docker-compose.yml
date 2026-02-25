@@ -73,7 +73,7 @@ services:
       start_period: 40s
 
   speaches:
-    image: ghcr.io/speaches-ai/speaches:latest-cuda
+    image: ghcr.io/speaches-ai/speaches:v0.9.0-rc.3-cuda
     container_name: speaches
     ports:
       - "127.0.0.1:${SPEACHES_PORT:-8090}:8000"
