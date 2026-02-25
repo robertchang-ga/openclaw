@@ -15,11 +15,7 @@ git clone --depth 1 --branch v0.9.0-rc.3 https://github.com/speaches-ai/speaches
 cd "$BUILD_DIR"
 
 echo "=== Applying ASGI middleware fix to dependencies.py ==="
-# The fix: wrap bare routers in FastAPI() sub-apps before passing to ASGITransport
-# This ensures the asyncexitstack middleware is present in the request scope
 python3 - <<'PATCH_SCRIPT'
-import re
-
 filepath = "src/speaches/dependencies.py"
 with open(filepath, "r") as f:
     content = f.read()
@@ -94,9 +90,40 @@ with open(filepath, "w") as f:
 print("OK: Patched dependencies.py successfully")
 PATCH_SCRIPT
 
+echo "=== Patching Dockerfile to remove BuildKit --mount syntax ==="
+python3 - <<'PATCH_DOCKERFILE'
+with open("Dockerfile", "r") as f:
+    content = f.read()
+
+# Replace the --mount=type=cache,type=bind uv sync steps with standard COPY+RUN
+old_uv_install = '''RUN --mount=type=cache,target=/root/.cache/uv \\
+    --mount=type=bind,source=uv.lock,target=uv.lock \\
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \\
+    uv sync --frozen --compile-bytecode --no-install-project --no-dev
+COPY --chown=ubuntu . .
+RUN --mount=type=cache,target=/root/.cache/uv \\
+    uv sync --frozen --compile-bytecode --no-dev'''
+
+new_uv_install = '''COPY --chown=ubuntu pyproject.toml uv.lock ./
+RUN uv sync --frozen --compile-bytecode --no-install-project --no-dev
+COPY --chown=ubuntu . .
+RUN uv sync --frozen --compile-bytecode --no-dev'''
+
+if old_uv_install not in content:
+    print("ERROR: Could not find Dockerfile uv sync pattern to patch")
+    exit(1)
+
+content = content.replace(old_uv_install, new_uv_install)
+
+with open("Dockerfile", "w") as f:
+    f.write(content)
+
+print("OK: Patched Dockerfile successfully")
+PATCH_DOCKERFILE
+
 echo "=== Building Docker image ($TAG) ==="
-echo "This will take a few minutes..."
-DOCKER_BUILDKIT=1 docker build \
+echo "This will take several minutes..."
+docker build \
   --build-arg BASE_IMAGE=nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04 \
   -t "$TAG" \
   .
