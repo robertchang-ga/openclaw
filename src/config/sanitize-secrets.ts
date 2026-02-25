@@ -182,7 +182,13 @@ export function sanitizeConfigSecrets(
       // Inject into config sub-object (not entry-level, which Zod rejects)
       const rec = entry as { config?: Record<string, unknown> };
       if (!rec.config) rec.config = {};
-      if (!rec.config.baseUrl) {
+      const existing = rec.config.baseUrl;
+      // Overwrite if missing or pointing to localhost (which won't work inside container)
+      if (
+        !existing ||
+        (typeof existing === "string" &&
+          (existing.includes("localhost") || existing.includes("127.0.0.1")))
+      ) {
         rec.config.baseUrl = dockerUrl;
       }
     }
