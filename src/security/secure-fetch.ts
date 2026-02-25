@@ -137,12 +137,37 @@ async function secureFetch(input: RequestInfo | URL, init?: RequestInit): Promis
     string,
     unknown
   >;
-  return originalFetch(PROXY_URL, {
+
+  // IMPORTANT: Use redirect: 'manual' so that 3xx redirects from the proxy
+  // are NOT followed directly by Node's native fetch (which would bypass the
+  // proxy and try to connect to the redirect target directly — impossible on
+  // Docker's --internal network). Instead, we intercept the redirect and
+  // re-route the Location URL back through secureFetch → proxy → allowlist.
+  const response = await originalFetch(PROXY_URL, {
     ...initWithoutDispatcher,
     method,
     headers,
     body,
+    redirect: "manual",
   });
+
+  // Handle 3xx redirects: re-route through the proxy so the redirect target
+  // is allowlist-checked and the container never makes direct external requests.
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get("location");
+    if (location) {
+      // Resolve relative redirects against the original target URL.
+      const resolvedUrl = new URL(location, targetUrl).toString();
+      // Recursive call through secureFetch so proxy handles the new URL.
+      return secureFetch(resolvedUrl, {
+        ...initWithoutDispatcher,
+        method: method === "POST" ? "GET" : method, // POST → GET on redirect (per HTTP spec)
+        headers: new Headers(init?.headers), // Fresh headers without proxy-specific ones
+      });
+    }
+  }
+
+  return response;
 }
 
 /**

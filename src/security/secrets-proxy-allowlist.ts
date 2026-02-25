@@ -43,6 +43,7 @@ export const DEFAULT_ALLOWED_DOMAINS = [
   // HuggingFace
   "router.huggingface.co",
   "huggingface.co",
+  "hf.co", // CDN for model downloads (cdn-lfs.hf.co)
   // Vercel AI Gateway
   "ai-gateway.vercel.sh",
   // GitHub Copilot
