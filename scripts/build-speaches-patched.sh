@@ -96,7 +96,7 @@ PATCH_SCRIPT
 
 echo "=== Building Docker image ($TAG) ==="
 echo "This will take a few minutes..."
-docker build \
+DOCKER_BUILDKIT=1 docker build \
   --build-arg BASE_IMAGE=nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04 \
   -t "$TAG" \
   .
