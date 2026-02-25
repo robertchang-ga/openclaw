@@ -46,11 +46,19 @@ Wrap bare routers in `FastAPI()` sub-apps before passing to `ASGITransport`:
 
 ### Build & Deploy
 ```bash
-# Build the patched image (requires CUDA GPU host, ~5 min)
+# 1. Pull latest and build the patched image (requires CUDA GPU host, ~5 min)
+cd ~/openclaw
+git fetch origin && git reset --hard origin/feat/security-proxy
 bash scripts/build-speaches-patched.sh
 
-# Deploy
-docker compose down speaches && docker compose up -d speaches
+# 2. Deploy the patched container
+docker compose down speaches
+docker compose up -d speaches
+
+# 3. Wait for it to become healthy
+watch docker ps | grep speaches
+
+# 4. Restart gateway so it connects to the new Speaches
 sudo systemctl restart openclaw-gateway
 ```
 
