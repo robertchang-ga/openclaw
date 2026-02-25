@@ -109,6 +109,10 @@ type VoiceSessionEntry = {
   processingQueue: Promise<void>;
   activeSpeakers: Set<string>;
   realtimeSTT: RealtimeSTT | null;
+  /** Debounce timer for batching rapid STT transcripts into one LLM call. */
+  transcriptDebounceTimer: ReturnType<typeof setTimeout> | null;
+  /** Accumulated transcripts during the debounce window. */
+  transcriptBuffer: string[];
   stop: () => void;
 };
 
@@ -482,7 +486,13 @@ export class DiscordVoiceManager {
       processingQueue: Promise.resolve(),
       activeSpeakers: new Set(),
       realtimeSTT: null,
+      transcriptDebounceTimer: null,
+      transcriptBuffer: [],
       stop: () => {
+        if (entry.transcriptDebounceTimer) {
+          clearTimeout(entry.transcriptDebounceTimer);
+          entry.transcriptDebounceTimer = null;
+        }
         entry.realtimeSTT?.destroy();
         player.stop();
         connection.destroy();
@@ -500,9 +510,24 @@ export class DiscordVoiceManager {
         logger.info(
           `realtime transcript (${text.length} chars): guild ${guildId} channel ${channelId}`,
         );
-        this.enqueueProcessing(entry, async () => {
-          await this.processTranscript({ entry, transcript: text });
-        });
+        // Batch rapid transcripts: accumulate over a 3-second window
+        // and send as one combined message to the LLM.
+        entry.transcriptBuffer.push(text);
+        if (entry.transcriptDebounceTimer) {
+          clearTimeout(entry.transcriptDebounceTimer);
+        }
+        entry.transcriptDebounceTimer = setTimeout(() => {
+          const segments = entry.transcriptBuffer.length;
+          const combined = entry.transcriptBuffer.join(" ");
+          entry.transcriptBuffer = [];
+          entry.transcriptDebounceTimer = null;
+          logger.info(
+            `batched transcript (${combined.length} chars, ${segments} segments): guild ${guildId}`,
+          );
+          this.enqueueProcessing(entry, async () => {
+            await this.processTranscript({ entry, transcript: combined });
+          });
+        }, 3_000);
       },
       onSpeechStart: () => {
         // Interrupt current playback when user starts speaking
@@ -671,9 +696,9 @@ export class DiscordVoiceManager {
       let sentenceCount = 0;
 
       const splitAndSpeak = (flush: boolean) => {
-        // Sentence boundary: period, exclamation, question mark, or colon
-        // followed by whitespace (or end of string if flushing).
-        const boundary = flush ? /([.!?:;])\s*/ : /([.!?:;])\s+/;
+        // Split at sentence AND clause boundaries (commas) for lower latency.
+        // Kokoro produces natural-sounding audio even for comma-delimited clauses.
+        const boundary = flush ? /([.!?:;,])\s*/ : /([.!?:;,])\s+/;
 
         let match: RegExpExecArray | null;
         while ((match = boundary.exec(sentenceBuffer)) !== null) {
