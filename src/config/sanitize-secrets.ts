@@ -175,10 +175,20 @@ export function sanitizeConfigSecrets(
     "8000": { hostname: "cognee", containerPort: "8000" },
     "8090": { hostname: "speaches", containerPort: "8000" },
   };
+
+  // Known sidecar plugins and their default localhost ports.
+  // If the plugin config has no baseUrl, inject the Docker-internal URL.
+  const SIDECAR_PLUGIN_DEFAULTS: Record<string, string> = {
+    "memory-cognee": "http://cognee:8000",
+  };
+
   if (sanitized.plugins?.entries) {
-    for (const entry of Object.values(sanitized.plugins.entries)) {
+    for (const [pluginId, entry] of Object.entries(sanitized.plugins.entries)) {
       const rec = entry as Record<string, unknown> | undefined;
-      if (rec?.baseUrl && typeof rec.baseUrl === "string") {
+      if (!rec) continue;
+
+      if (rec.baseUrl && typeof rec.baseUrl === "string") {
+        // Rewrite existing localhost URLs
         try {
           const parsed = new URL(rec.baseUrl);
           if (
@@ -193,6 +203,9 @@ export function sanitizeConfigSecrets(
         } catch {
           /* invalid URL, leave unchanged */
         }
+      } else if (SIDECAR_PLUGIN_DEFAULTS[pluginId]) {
+        // Inject baseUrl for known sidecar plugins that use localhost defaults
+        rec.baseUrl = SIDECAR_PLUGIN_DEFAULTS[pluginId];
       }
     }
   }
