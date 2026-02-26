@@ -467,6 +467,71 @@ const memoryCogneePlugin = {
             return result;
         }
         // ------------------------------------------------------------------
+        // Tool: cognee_search — on-demand memory search
+        // ------------------------------------------------------------------
+        api.registerTool({
+            name: "cognee_search",
+            description: "Search long-term memory and knowledge base for relevant context. Use when you need to recall past conversations, stored knowledge, or specific topics. Returns the most relevant memory entries.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: {
+                        type: "string",
+                        description: "The search query describing what you want to recall",
+                    },
+                },
+                required: ["query"],
+            },
+            async execute(_id, params) {
+                await stateReady;
+                const query = typeof params.query === "string" ? params.query.trim() : "";
+                if (!query) {
+                    return {
+                        content: [{ type: "text", text: "Error: query parameter is required" }],
+                        details: { error: "missing query" },
+                    };
+                }
+                if (!datasetId) {
+                    return {
+                        content: [{ type: "text", text: "No memory dataset available. Index memory files first with `openclaw cognee index`." }],
+                        details: { error: "no dataset" },
+                    };
+                }
+                try {
+                    const results = await client.search({
+                        queryText: query,
+                        searchType: cfg.searchType,
+                        datasetIds: [datasetId],
+                        maxTokens: cfg.maxTokens,
+                    });
+                    const filtered = results
+                        .filter((r) => r.score >= cfg.minScore)
+                        .slice(0, cfg.maxResults);
+                    if (filtered.length === 0) {
+                        return {
+                            content: [{ type: "text", text: "No relevant memories found." }],
+                            details: { resultCount: 0 },
+                        };
+                    }
+                    const payload = filtered.map((r) => ({
+                        score: r.score,
+                        text: r.text,
+                        ...(r.metadata ? { metadata: r.metadata } : {}),
+                    }));
+                    return {
+                        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+                        details: { resultCount: filtered.length },
+                    };
+                } catch (error) {
+                    api.logger.warn?.(`memory-cognee: tool search failed: ${String(error)}`);
+                    return {
+                        content: [{ type: "text", text: `Memory search failed: ${String(error)}` }],
+                        details: { error: String(error) },
+                    };
+                }
+            },
+        });
+        // ------------------------------------------------------------------
         // CLI: openclaw cognee index / openclaw cognee status
         // ------------------------------------------------------------------
         api.registerCli((ctx) => {
