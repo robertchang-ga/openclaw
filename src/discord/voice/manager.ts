@@ -752,6 +752,10 @@ export class DiscordVoiceManager {
             messageChannel: "discord",
             deliver: false,
             runId,
+            extraSystemPrompt:
+              "You are in a live voice conversation. Reply with plain spoken text ONLY. " +
+              "Do NOT use the tts tool — your text response will be converted to speech automatically. " +
+              "Keep responses concise and conversational.",
           },
           this.params.runtime,
         );
@@ -789,6 +793,10 @@ export class DiscordVoiceManager {
           agentId: entry.route.agentId,
           messageChannel: "discord",
           deliver: false,
+          extraSystemPrompt:
+            "You are in a live voice conversation. Reply with plain spoken text ONLY. " +
+            "Do NOT use the tts tool — your text response will be converted to speech automatically. " +
+            "Keep responses concise and conversational.",
         },
         this.params.runtime,
       );
