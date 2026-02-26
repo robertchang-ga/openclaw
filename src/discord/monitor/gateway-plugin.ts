@@ -27,6 +27,9 @@ export function resolveDiscordGatewayIntents(
   return intents;
 }
 
+/** ws-relay+ scheme prefix used by sanitize-secrets.ts in secure mode. */
+const WS_RELAY_PREFIX = "ws-relay+";
+
 export function createDiscordGatewayPlugin(params: {
   discordConfig: DiscordAccountConfig;
   runtime: RuntimeEnv;
@@ -43,14 +46,23 @@ export function createDiscordGatewayPlugin(params: {
     return new GatewayPlugin(options);
   }
 
-  try {
-    // In secure mode, sanitize-secrets.ts may set the proxy to ws-relay+http://...
-    // Strip the ws-relay+ prefix; the relay container is a standard HTTP proxy.
-    const resolvedProxy = proxy.replace(/^ws-relay\+/, "");
-    const wsAgent = new HttpsProxyAgent<string>(resolvedProxy);
-    const fetchAgent = new ProxyAgent(resolvedProxy);
+  const isWsRelay = proxy.startsWith(WS_RELAY_PREFIX);
 
-    params.runtime.log?.("discord: gateway proxy enabled");
+  try {
+    // In secure mode, sanitize-secrets.ts sets the proxy to ws-relay+http://host:port.
+    // This signals that the proxy provides a WebSocket relay endpoint at /ws-relay
+    // which handles TLS termination and secret injection for the Discord gateway.
+    const resolvedProxy = isWsRelay ? proxy.slice(WS_RELAY_PREFIX.length) : proxy;
+    // REST API uses standard HTTP forward proxy (works for both modes).
+    const fetchAgent = new ProxyAgent(resolvedProxy);
+    // Gateway WebSocket: use ws-relay endpoint or standard CONNECT tunnel.
+    const wsAgent = isWsRelay ? null : new HttpsProxyAgent<string>(resolvedProxy);
+    // The proxy auth token for the ws-relay endpoint.
+    const proxyAuthToken = process.env.PROXY_AUTH_TOKEN?.trim();
+
+    params.runtime.log?.(
+      isWsRelay ? "discord: gateway ws-relay proxy enabled" : "discord: gateway proxy enabled",
+    );
 
     class ProxyGatewayPlugin extends GatewayPlugin {
       constructor() {
@@ -78,7 +90,20 @@ export function createDiscordGatewayPlugin(params: {
       }
 
       override createWebSocket(url: string) {
-        return new WebSocket(url, { agent: wsAgent });
+        if (wsAgent) {
+          // Standard CONNECT tunnel proxy
+          return new WebSocket(url, { agent: wsAgent });
+        }
+        // WS relay mode: connect to the relay endpoint and pass the target URL
+        // as a header. The relay opens the real WSS connection to Discord and
+        // relays frames, injecting secrets into text frames with placeholders.
+        const relayUrl = resolvedProxy.replace(/^https?:/, "ws:") + "/ws-relay";
+        return new WebSocket(relayUrl, {
+          headers: {
+            "X-WS-Target-URL": url,
+            ...(proxyAuthToken ? { "X-Proxy-Token": proxyAuthToken } : {}),
+          },
+        });
       }
     }
 
