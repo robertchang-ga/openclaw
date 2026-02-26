@@ -164,6 +164,14 @@ export async function kokoroTTSBuffer(text: string, config: KokoroConfig): Promi
 }
 
 /**
+ * Pre-warm the Kokoro ONNX model so the first generate() call is fast.
+ * Call this at voice channel join to eliminate cold start latency.
+ */
+export async function warmUpKokoro(dtype?: string): Promise<void> {
+  await getKokoroInstance(dtype || DEFAULT_KOKORO_DTYPE);
+}
+
+/**
  * Reset the singleton (for testing or to force model re-initialization).
  */
 export function resetKokoroInstance(): void {

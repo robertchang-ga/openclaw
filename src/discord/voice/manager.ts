@@ -27,7 +27,7 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { resolveAgentRoute } from "../../routing/resolve-route.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { parseTtsDirectives } from "../../tts/tts-core.js";
-import { kokoroTTSBuffer, resolveKokoroConfig } from "../../tts/tts-kokoro.js";
+import { kokoroTTSBuffer, resolveKokoroConfig, warmUpKokoro } from "../../tts/tts-kokoro.js";
 import { resolveTtsConfig, textToSpeech, type ResolvedTtsConfig } from "../../tts/tts.js";
 import { RealtimeSTT, resample48kStereoTo24kMono } from "./realtime-stt.js";
 
@@ -355,6 +355,11 @@ export class DiscordVoiceManager {
     const player = createAudioPlayer();
     connection.subscribe(player);
 
+    // Pre-warm Kokoro ONNX model so first TTS call is fast.
+    const voiceTtsOverride = this.params.discordConfig.voice?.tts;
+    const kokoroDtype = voiceTtsOverride?.kokoro?.dtype;
+    warmUpKokoro(kokoroDtype ?? undefined).catch(() => {});
+
     const entry: VoiceSessionEntry = {
       guildId,
       channelId,
@@ -656,6 +661,20 @@ export class DiscordVoiceManager {
             continue;
           }
 
+          speakChunk(sentence);
+        }
+
+        // Early-flush: if 40+ chars have accumulated without a sentence boundary,
+        // speak them immediately to reduce time-to-first-audio.
+        if (!flush && sentenceBuffer.trim().length >= 40) {
+          const earlyChunk = sentenceBuffer.trim();
+          sentenceBuffer = "";
+          speakChunk(earlyChunk);
+        }
+      };
+
+      const speakChunk = (sentence: string) => {
+
           sentenceCount++;
           const sentenceNum = sentenceCount;
           logger.info(
@@ -698,34 +717,7 @@ export class DiscordVoiceManager {
         if (flush && sentenceBuffer.trim().length >= 2) {
           const remaining = sentenceBuffer.trim();
           sentenceBuffer = "";
-          sentenceCount++;
-          const sentenceNum = sentenceCount;
-          logger.info(
-            `kokoro flush #${sentenceNum} (${remaining.length} chars): guild ${entry.guildId}`,
-          );
-          // Start generation eagerly, same as the sentence path.
-          const flushAudioPromise = kokoroTTSBuffer(remaining, kokoroConfig);
-          this.enqueuePlayback(entry, async () => {
-            const wavBuf = await flushAudioPromise;
-            const tempRoot = resolvePreferredOpenClawTmpDir();
-            mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
-            const tempDir = mkdtempSync(path.join(tempRoot, "tts-stream-"));
-            const audioPath = path.join(tempDir, `s${sentenceNum}.wav`);
-            writeFileSync(audioPath, wavBuf);
-            const resource = createAudioResource(audioPath);
-            entry.player.play(resource);
-            await entersState(
-              entry.player,
-              AudioPlayerStatus.Playing,
-              PLAYBACK_READY_TIMEOUT_MS,
-            ).catch(() => undefined);
-            await entersState(
-              entry.player,
-              AudioPlayerStatus.Idle,
-              SPEAKING_READY_TIMEOUT_MS,
-            ).catch(() => undefined);
-            fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
-          });
+          speakChunk(remaining);
         }
       };
 
