@@ -647,6 +647,45 @@ export class DiscordVoiceManager {
       let sentenceBuffer = "";
       let sentenceCount = 0;
 
+      const speakChunk = (sentence: string) => {
+        sentenceCount++;
+        const sentenceNum = sentenceCount;
+        logger.info(
+          `kokoro sentence #${sentenceNum} (${sentence.length} chars): guild ${entry.guildId}`,
+        );
+
+        // Start TTS generation immediately (parallel with prior playback).
+        const audioPromise = kokoroTTSBuffer(sentence, kokoroConfig);
+
+        // Enqueue playback: awaits the pre-generated audio, which may
+        // already be ready by the time the previous sentence finishes.
+        this.enqueuePlayback(entry, async () => {
+          const wavBuf = await audioPromise;
+          const tempRoot = resolvePreferredOpenClawTmpDir();
+          mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+          const tempDir = mkdtempSync(path.join(tempRoot, "tts-stream-"));
+          const audioPath = path.join(tempDir, `s${sentenceNum}.wav`);
+          writeFileSync(audioPath, wavBuf);
+          logger.info(
+            `kokoro playback #${sentenceNum}: guild ${entry.guildId} file ${path.basename(audioPath)} (${wavBuf.length} bytes)`,
+          );
+          const resource = createAudioResource(audioPath);
+          entry.player.play(resource);
+          await entersState(
+            entry.player,
+            AudioPlayerStatus.Playing,
+            PLAYBACK_READY_TIMEOUT_MS,
+          ).catch(() => undefined);
+          await entersState(
+            entry.player,
+            AudioPlayerStatus.Idle,
+            SPEAKING_READY_TIMEOUT_MS,
+          ).catch(() => undefined);
+          // Clean up temp file.
+          fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+        });
+      };
+
       const splitAndSpeak = (flush: boolean) => {
         // Split at sentence AND clause boundaries (commas) for lower latency.
         // Kokoro produces natural-sounding audio even for comma-delimited clauses.
@@ -670,47 +709,6 @@ export class DiscordVoiceManager {
           const earlyChunk = sentenceBuffer.trim();
           sentenceBuffer = "";
           speakChunk(earlyChunk);
-        }
-      };
-
-      const speakChunk = (sentence: string) => {
-
-          sentenceCount++;
-          const sentenceNum = sentenceCount;
-          logger.info(
-            `kokoro sentence #${sentenceNum} (${sentence.length} chars): guild ${entry.guildId}`,
-          );
-
-          // Start TTS generation immediately (parallel with prior playback).
-          const audioPromise = kokoroTTSBuffer(sentence, kokoroConfig);
-
-          // Enqueue playback: awaits the pre-generated audio, which may
-          // already be ready by the time the previous sentence finishes.
-          this.enqueuePlayback(entry, async () => {
-            const wavBuf = await audioPromise;
-            const tempRoot = resolvePreferredOpenClawTmpDir();
-            mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
-            const tempDir = mkdtempSync(path.join(tempRoot, "tts-stream-"));
-            const audioPath = path.join(tempDir, `s${sentenceNum}.wav`);
-            writeFileSync(audioPath, wavBuf);
-            logger.info(
-              `kokoro playback #${sentenceNum}: guild ${entry.guildId} file ${path.basename(audioPath)} (${wavBuf.length} bytes)`,
-            );
-            const resource = createAudioResource(audioPath);
-            entry.player.play(resource);
-            await entersState(
-              entry.player,
-              AudioPlayerStatus.Playing,
-              PLAYBACK_READY_TIMEOUT_MS,
-            ).catch(() => undefined);
-            await entersState(
-              entry.player,
-              AudioPlayerStatus.Idle,
-              SPEAKING_READY_TIMEOUT_MS,
-            ).catch(() => undefined);
-            // Clean up temp file.
-            fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
-          });
         }
 
         // On flush, speak whatever remains even if no sentence boundary.
