@@ -2,7 +2,7 @@
 # update-gateway.sh — Pull latest, rebuild, and restart the openclaw-gateway service.
 # Usage: ./scripts/update-gateway.sh [branch] [--full]
 #   branch defaults to feat/security-proxy
-#   --full: run full rebuild (pnpm install, npm install -g)
+#   --full: force full rebuild (pnpm install, npm install -g)
 
 set -euo pipefail
 
@@ -12,8 +12,19 @@ for arg in "$@"; do
   [ "$arg" = "--full" ] && FULL=true
 done
 
+# Record lockfile hash before pull to detect dep changes.
+LOCK_BEFORE=$(md5sum pnpm-lock.yaml 2>/dev/null | cut -d' ' -f1 || echo "none")
+
 echo "==> Pulling $BRANCH..."
 git pull origin "$BRANCH"
+
+LOCK_AFTER=$(md5sum pnpm-lock.yaml 2>/dev/null | cut -d' ' -f1 || echo "none")
+
+# Auto-detect dependency changes.
+if [ "$LOCK_BEFORE" != "$LOCK_AFTER" ]; then
+  echo "==> pnpm-lock.yaml changed — installing dependencies..."
+  FULL=true
+fi
 
 if $FULL; then
   echo "==> Installing dependencies..."
