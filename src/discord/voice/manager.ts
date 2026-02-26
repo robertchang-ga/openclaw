@@ -773,7 +773,7 @@ export class DiscordVoiceManager {
               "You are in a live voice conversation. Reply with plain spoken text ONLY. " +
               "Do NOT use the tts tool \u2014 your text response will be converted to speech automatically. " +
               "Keep responses concise and conversational. Do NOT use markdown, asterisks, or any formatting — this is spoken audio. " +
-              "When using cognee or memory tools, briefly say what you're doing first (e.g. 'Let me look that up.').",
+              "When using cognee or memory tools, briefly acknowledge first (e.g. 'Let me think about that.').",
           },
           this.params.runtime,
         );
@@ -815,7 +815,7 @@ export class DiscordVoiceManager {
             "You are in a live voice conversation. Reply with plain spoken text ONLY. " +
             "Do NOT use the tts tool \u2014 your text response will be converted to speech automatically. " +
             "Keep responses concise and conversational. Do NOT use markdown, asterisks, or any formatting — this is spoken audio. " +
-            "When using cognee or memory tools, briefly say what you're doing first (e.g. 'Let me look that up.').",
+            "When using cognee or memory tools, briefly acknowledge first (e.g. 'Let me think about that.').",
         },
         this.params.runtime,
       );
