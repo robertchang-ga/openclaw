@@ -358,7 +358,10 @@ export class DiscordVoiceManager {
     // Pre-warm Kokoro ONNX model so first TTS call is fast.
     const voiceTtsOverride = this.params.discordConfig.voice?.tts;
     const kokoroDtype = voiceTtsOverride?.kokoro?.dtype;
-    warmUpKokoro(kokoroDtype ?? undefined).catch(() => {});
+    logger.info(`kokoro pre-warm: starting (dtype=${kokoroDtype ?? "default"})`);
+    warmUpKokoro(kokoroDtype ?? undefined)
+      .then(() => logger.info("kokoro pre-warm: model ready"))
+      .catch((err) => logger.warn(`kokoro pre-warm failed: ${err}`));
 
     const entry: VoiceSessionEntry = {
       guildId,
