@@ -44,8 +44,11 @@ export function createDiscordGatewayPlugin(params: {
   }
 
   try {
-    const wsAgent = new HttpsProxyAgent<string>(proxy);
-    const fetchAgent = new ProxyAgent(proxy);
+    // In secure mode, sanitize-secrets.ts may set the proxy to ws-relay+http://...
+    // Strip the ws-relay+ prefix; the relay container is a standard HTTP proxy.
+    const resolvedProxy = proxy.replace(/^ws-relay\+/, "");
+    const wsAgent = new HttpsProxyAgent<string>(resolvedProxy);
+    const fetchAgent = new ProxyAgent(resolvedProxy);
 
     params.runtime.log?.("discord: gateway proxy enabled");
 

@@ -12,7 +12,10 @@ export function resolveDiscordRestFetch(
     return fetch;
   }
   try {
-    const agent = new ProxyAgent(proxy);
+    // In secure mode, sanitize-secrets.ts may set the proxy to ws-relay+http://...
+    // Strip the ws-relay+ prefix; the relay container is a standard HTTP proxy.
+    const resolvedProxy = proxy.replace(/^ws-relay\+/, "");
+    const agent = new ProxyAgent(resolvedProxy);
     const fetcher = ((input: RequestInfo | URL, init?: RequestInit) =>
       undiciFetch(input as string | URL, {
         ...(init as Record<string, unknown>),
