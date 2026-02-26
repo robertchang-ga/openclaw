@@ -21,6 +21,7 @@ import {
 } from "../../config/commands.js";
 import type { OpenClawConfig, ReplyToMode } from "../../config/config.js";
 import { loadConfig } from "../../config/config.js";
+import { isDangerousNameMatchingEnabled } from "../../config/dangerous-name-matching.js";
 import {
   GROUP_POLICY_BLOCKED_LABEL,
   resolveOpenProviderRuntimeGroupPolicy,
@@ -33,6 +34,7 @@ import { createDiscordRetryRunner } from "../../infra/retry-policy.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { createNonExitingRuntime, type RuntimeEnv } from "../../runtime.js";
 import { resolveDiscordAccount } from "../accounts.js";
+import { getDiscordGatewayEmitter } from "../monitor.gateway.js";
 import { fetchDiscordApplicationId } from "../probe.js";
 import { normalizeDiscordToken } from "../token.js";
 import { createDiscordVoiceCommand } from "../voice/command.js";
@@ -228,6 +230,33 @@ function isDiscordDisallowedIntentsError(err: unknown): boolean {
   return message.includes(String(DISCORD_DISALLOWED_INTENTS_CODE));
 }
 
+type EarlyGatewayErrorGuard = {
+  pendingErrors: unknown[];
+  release: () => void;
+};
+
+function attachEarlyGatewayErrorGuard(client: Client): EarlyGatewayErrorGuard {
+  const pendingErrors: unknown[] = [];
+  const gateway = client.getPlugin<GatewayPlugin>("gateway");
+  const emitter = getDiscordGatewayEmitter(gateway);
+  if (!emitter) {
+    return {
+      pendingErrors,
+      release: () => {},
+    };
+  }
+  const onGatewayError = (err: unknown) => {
+    pendingErrors.push(err);
+  };
+  emitter.on("error", onGatewayError);
+  return {
+    pendingErrors,
+    release: () => {
+      emitter.removeListener("error", onGatewayError);
+    },
+  };
+}
+
 export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
   const cfg = opts.config ?? loadConfig();
   const account = resolveDiscordAccount({
@@ -364,6 +393,7 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       })
     : createNoopThreadBindingManager(account.accountId);
   let lifecycleStarted = false;
+  let releaseEarlyGatewayErrorGuard = () => {};
   try {
     const commands: BaseCommand[] = commandSpecs.map((spec) =>
       createDiscordNativeCommand({
@@ -495,6 +525,8 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       },
       clientPlugins,
     );
+    const earlyGatewayErrorGuard = attachEarlyGatewayErrorGuard(client);
+    releaseEarlyGatewayErrorGuard = earlyGatewayErrorGuard.release;
 
     await deployDiscordCommands({ client, runtime, enabled: nativeEnabled });
 
@@ -549,6 +581,7 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       allowFrom,
       guildEntries,
       threadBindings,
+      discordRestFetch,
     });
 
     registerDiscordListener(client.listeners, new DiscordMessageListener(messageHandler, logger));
@@ -559,6 +592,13 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
         accountId: account.accountId,
         runtime,
         botUserId,
+        dmEnabled,
+        groupDmEnabled,
+        groupDmChannels: groupDmChannels ?? [],
+        dmPolicy,
+        allowFrom: allowFrom ?? [],
+        groupPolicy,
+        allowNameMatching: isDangerousNameMatchingEnabled(discordCfg),
         guildEntries,
         logger,
       }),
@@ -570,6 +610,13 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
         accountId: account.accountId,
         runtime,
         botUserId,
+        dmEnabled,
+        groupDmEnabled,
+        groupDmChannels: groupDmChannels ?? [],
+        dmPolicy,
+        allowFrom: allowFrom ?? [],
+        groupPolicy,
+        allowNameMatching: isDangerousNameMatchingEnabled(discordCfg),
         guildEntries,
         logger,
       }),
@@ -596,8 +643,11 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       voiceManagerRef,
       execApprovalsHandler,
       threadBindings,
+      pendingGatewayErrors: earlyGatewayErrorGuard.pendingErrors,
+      releaseEarlyGatewayErrorGuard,
     });
   } finally {
+    releaseEarlyGatewayErrorGuard();
     if (!lifecycleStarted) {
       threadBindings.stop();
     }

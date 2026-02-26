@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import {
   collectProviderApiKeysForExecution,
@@ -14,6 +13,7 @@ import type {
   MediaUnderstandingModelConfig,
 } from "../config/types.tools.js";
 import { logVerbose, shouldLogVerbose } from "../globals.js";
+import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { runExec } from "../process/exec.js";
 import { MediaAttachmentCache } from "./attachments.js";
 import {
@@ -35,33 +35,6 @@ import type {
   MediaUnderstandingProvider,
 } from "./types.js";
 import { estimateBase64Size, resolveVideoMaxBase64Bytes } from "./video.js";
-
-/**
- * In Docker secure mode (`OPENCLAW_SECURE_MODE=1`), the config-level baseUrl
- * `http://localhost:8090/v1` is unreachable because `localhost` inside the
- * container refers to the container itself, not the host.
- *
- * Both the gateway container and the Speaches container are on the shared
- * `openclaw-secure-net` Docker network, so the gateway can reach Speaches
- * directly at `speaches:8000` (the container-internal port).
- */
-export function resolveSecureModeBaseUrl(baseUrl: string | undefined): string | undefined {
-  if (!baseUrl || !process.env.OPENCLAW_SECURE_MODE) return baseUrl;
-  try {
-    const parsed = new URL(baseUrl);
-    if (
-      (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") &&
-      parsed.port === "8090"
-    ) {
-      parsed.hostname = "speaches";
-      parsed.port = "8000";
-      return parsed.toString().replace(/\/$/, "");
-    }
-  } catch {
-    /* invalid URL, pass through */
-  }
-  return baseUrl;
-}
 
 export type ProviderRegistry = Map<string, MediaUnderstandingProvider>;
 
@@ -347,6 +320,29 @@ async function resolveProviderExecutionAuth(params: {
   };
 }
 
+async function resolveProviderExecutionContext(params: {
+  providerId: string;
+  cfg: OpenClawConfig;
+  entry: MediaUnderstandingModelConfig;
+  config?: MediaUnderstandingConfig;
+  agentDir?: string;
+}) {
+  const { apiKeys, providerConfig } = await resolveProviderExecutionAuth({
+    providerId: params.providerId,
+    cfg: params.cfg,
+    entry: params.entry,
+    agentDir: params.agentDir,
+  });
+  const baseUrl = params.entry.baseUrl ?? params.config?.baseUrl ?? providerConfig?.baseUrl;
+  const mergedHeaders = {
+    ...providerConfig?.headers,
+    ...params.config?.headers,
+    ...params.entry.headers,
+  };
+  const headers = Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined;
+  return { apiKeys, baseUrl, headers };
+}
+
 export function formatDecisionSummary(decision: MediaUnderstandingDecision): string {
   const total = decision.attachments.length;
   const success = decision.attachments.filter(
@@ -455,20 +451,13 @@ export async function runProviderEntry(params: {
       maxBytes,
       timeoutMs,
     });
-    const { apiKeys, providerConfig } = await resolveProviderExecutionAuth({
+    const { apiKeys, baseUrl, headers } = await resolveProviderExecutionContext({
       providerId,
       cfg,
       entry,
+      config: params.config,
       agentDir: params.agentDir,
     });
-    const rawBaseUrl = entry.baseUrl ?? params.config?.baseUrl ?? providerConfig?.baseUrl;
-    const baseUrl = resolveSecureModeBaseUrl(rawBaseUrl);
-    const mergedHeaders = {
-      ...providerConfig?.headers,
-      ...params.config?.headers,
-      ...entry.headers,
-    };
-    const headers = Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined;
     const providerQuery = resolveProviderQuery({
       providerId,
       config: params.config,
@@ -519,10 +508,11 @@ export async function runProviderEntry(params: {
       `Video attachment ${params.attachmentIndex + 1} base64 payload ${estimatedBase64Bytes} exceeds ${maxBase64Bytes}`,
     );
   }
-  const { apiKeys, providerConfig } = await resolveProviderExecutionAuth({
+  const { apiKeys, baseUrl, headers } = await resolveProviderExecutionContext({
     providerId,
     cfg,
     entry,
+    config: params.config,
     agentDir: params.agentDir,
   });
   const result = await executeWithApiKeyRotation({
@@ -534,8 +524,8 @@ export async function runProviderEntry(params: {
         fileName: media.fileName,
         mime: media.mime,
         apiKey,
-        baseUrl: providerConfig?.baseUrl,
-        headers: providerConfig?.headers,
+        baseUrl,
+        headers,
         model: entry.model,
         prompt,
         timeoutMs,
@@ -576,7 +566,9 @@ export async function runCliEntry(params: {
     maxBytes,
     timeoutMs,
   });
-  const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-media-cli-"));
+  const outputDir = await fs.mkdtemp(
+    path.join(resolvePreferredOpenClawTmpDir(), "openclaw-media-cli-"),
+  );
   const mediaPath = pathResult.path;
   const outputBase = path.join(outputDir, path.parse(mediaPath).name);
 

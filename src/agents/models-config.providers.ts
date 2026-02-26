@@ -5,6 +5,13 @@ import {
   DEFAULT_COPILOT_API_BASE_URL,
   resolveCopilotApiToken,
 } from "../providers/github-copilot-token.js";
+import {
+  KILOCODE_BASE_URL,
+  KILOCODE_DEFAULT_CONTEXT_WINDOW,
+  KILOCODE_DEFAULT_COST,
+  KILOCODE_DEFAULT_MAX_TOKENS,
+  KILOCODE_MODEL_CATALOG,
+} from "../providers/kilocode-shared.js";
 import { ensureAuthProfileStore, listProfilesForProvider } from "./auth-profiles.js";
 import { discoverBedrockModels } from "./bedrock-discovery.js";
 import {
@@ -44,7 +51,6 @@ import {
   buildTogetherModelDefinition,
 } from "./together-models.js";
 import { discoverVeniceModels, VENICE_BASE_URL } from "./venice-models.js";
-import { discoverAntigravityModels, hasAntigravityProfiles } from "./antigravity-models.js";
 
 type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 export type ProviderConfig = NonNullable<ModelsConfig["providers"]>[string];
@@ -89,7 +95,6 @@ function buildMinimaxTextModel(params: {
 }): ProviderModelConfig {
   return buildMinimaxModel({ ...params, input: ["text"] });
 }
-
 
 const XIAOMI_BASE_URL = "https://api.xiaomimimo.com/anthropic";
 export const XIAOMI_DEFAULT_MODEL_ID = "mimo-v2-flash";
@@ -515,7 +520,7 @@ function buildMoonshotProvider(): ProviderConfig {
         id: MOONSHOT_DEFAULT_MODEL_ID,
         name: "Kimi K2.5",
         reasoning: false,
-        input: ["text"],
+        input: ["text", "image"],
         cost: MOONSHOT_DEFAULT_COST,
         contextWindow: MOONSHOT_DEFAULT_CONTEXT_WINDOW,
         maxTokens: MOONSHOT_DEFAULT_MAX_TOKENS,
@@ -566,14 +571,6 @@ function buildQwenPortalProvider(): ProviderConfig {
         maxTokens: QWEN_PORTAL_DEFAULT_MAX_TOKENS,
       },
     ],
-  };
-}
-
-function buildOpenRouterProvider(): ProviderConfig {
-  return {
-    baseUrl: OPENROUTER_BASE_URL,
-    api: "openai-completions",
-    models: [],
   };
 }
 
@@ -688,6 +685,12 @@ function buildOpenrouterProvider(): ProviderConfig {
       {
         id: OPENROUTER_DEFAULT_MODEL_ID,
         name: "OpenRouter Auto",
+        // reasoning: false here is a catalog default only; it does NOT cause
+        // `reasoning.effort: "none"` to be sent for the "auto" routing model.
+        // applyExtraParamsToAgent skips the reasoning effort injection for
+        // model id "auto" because it dynamically routes to any OpenRouter model
+        // (including ones where reasoning is mandatory and cannot be disabled).
+        // See: openclaw/openclaw#24851
         reasoning: false,
         input: ["text", "image"],
         cost: OPENROUTER_DEFAULT_COST,
@@ -771,6 +774,22 @@ export function buildNvidiaProvider(): ProviderConfig {
         maxTokens: 2048,
       },
     ],
+  };
+}
+
+export function buildKilocodeProvider(): ProviderConfig {
+  return {
+    baseUrl: KILOCODE_BASE_URL,
+    api: "openai-completions",
+    models: KILOCODE_MODEL_CATALOG.map((model) => ({
+      id: model.id,
+      name: model.name,
+      reasoning: model.reasoning,
+      input: model.input,
+      cost: KILOCODE_DEFAULT_COST,
+      contextWindow: model.contextWindow ?? KILOCODE_DEFAULT_CONTEXT_WINDOW,
+      maxTokens: model.maxTokens ?? KILOCODE_DEFAULT_MAX_TOKENS,
+    })),
   };
 }
 
@@ -891,7 +910,6 @@ export async function resolveImplicitProviders(params: {
     break;
   }
 
-
   // Ollama provider - only add if explicitly configured.
   // Use the user's configured baseUrl (from explicit providers) for model
   // discovery so that remote / non-default Ollama instances are reachable.
@@ -962,25 +980,11 @@ export async function resolveImplicitProviders(params: {
     providers.nvidia = { ...buildNvidiaProvider(), apiKey: nvidiaKey };
   }
 
-  // google-antigravity: discover models from live API when OAuth is configured.
-  // Discovered models are merged with the SDK's built-in catalog, so new API
-  // models appear automatically without forward-compat entries.
-  if (hasAntigravityProfiles(params.agentDir)) {
-    try {
-      const discoveredModels = await discoverAntigravityModels({
-        agentDir: params.agentDir,
-      });
-      if (discoveredModels.length > 0) {
-        providers["google-antigravity"] = {
-          baseUrl: "https://daily-cloudcode-pa.sandbox.googleapis.com",
-          api: "google-gemini-cli" as ProviderConfig["api"],
-          models: discoveredModels,
-          apiKey: "antigravity-oauth",
-        };
-      }
-    } catch {
-      // Discovery is best-effort; don't block provider resolution.
-    }
+  const kilocodeKey =
+    resolveEnvApiKeyVarName("kilocode") ??
+    resolveApiKeyFromProfiles({ provider: "kilocode", store: authStore });
+  if (kilocodeKey) {
+    providers.kilocode = { ...buildKilocodeProvider(), apiKey: kilocodeKey };
   }
 
   return providers;

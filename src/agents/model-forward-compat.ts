@@ -17,8 +17,6 @@ const ANTHROPIC_SONNET_TEMPLATE_MODEL_IDS = ["claude-sonnet-4-5", "claude-sonnet
 const ZAI_GLM5_MODEL_ID = "glm-5";
 const ZAI_GLM5_TEMPLATE_MODEL_IDS = ["glm-4.7"] as const;
 
-
-
 function cloneFirstTemplateModel(params: {
   normalizedProvider: string;
   trimmedModelId: string;
@@ -201,8 +199,6 @@ function resolveZaiGlm5ForwardCompatModel(
     maxTokens: DEFAULT_CONTEXT_TOKENS,
   } as Model<Api>);
 }
-
-
 
 export function resolveForwardCompatModel(
   provider: string,

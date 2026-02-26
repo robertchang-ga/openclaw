@@ -1,5 +1,7 @@
 import { GatewayIntents, GatewayPlugin } from "@buape/carbon/gateway";
+import type { APIGatewayBotInfo } from "discord-api-types/v10";
 import { HttpsProxyAgent } from "https-proxy-agent";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 import WebSocket from "ws";
 import type { DiscordAccountConfig } from "../../config/types.js";
 import { danger } from "../../globals.js";
@@ -42,47 +44,8 @@ export function createDiscordGatewayPlugin(params: {
   }
 
   try {
-    // Detect secure-mode WS relay proxy (set automatically by sanitize-secrets.ts).
-    // The proxy URL uses the "ws-relay+" scheme prefix followed by the relay base URL.
-    // e.g. "ws-relay+http://openclaw-relay:8012"
-    // In this mode we connect plain WS to {relayBase}/ws-relay and let the proxy
-    // establish the real WSS connection to Discord. This avoids TLS interception
-    // on the container side (no self-signed cert needed).
-    if (proxy.startsWith("ws-relay+")) {
-      const relayBase = proxy.slice("ws-relay+".length);
-      const proxyAuthToken = process.env.PROXY_AUTH_TOKEN ?? "";
-      if (!proxyAuthToken) {
-        params.runtime.error?.(
-          "discord: PROXY_AUTH_TOKEN is not set — WS relay requests will fail auth",
-        );
-      }
-
-      params.runtime.log?.("discord: using secure WS relay for gateway");
-
-      class WsRelayGatewayPlugin extends GatewayPlugin {
-        constructor() {
-          super(options);
-        }
-
-        createWebSocket(targetUrl: string) {
-          // Convert relay base URL to WS scheme (http→ws, https→wss)
-          const relayWsBase = relayBase.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
-          const relayEndpoint = `${relayWsBase}/ws-relay`;
-
-          return new WebSocket(relayEndpoint, {
-            headers: {
-              "x-ws-target-url": targetUrl,
-              "x-proxy-token": proxyAuthToken,
-            },
-          });
-        }
-      }
-
-      return new WsRelayGatewayPlugin();
-    }
-
-    // Standard HTTPS proxy (existing behaviour for externally configured proxies)
-    const agent = new HttpsProxyAgent<string>(proxy);
+    const wsAgent = new HttpsProxyAgent<string>(proxy);
+    const fetchAgent = new ProxyAgent(proxy);
 
     params.runtime.log?.("discord: gateway proxy enabled");
 
@@ -91,8 +54,28 @@ export function createDiscordGatewayPlugin(params: {
         super(options);
       }
 
-      createWebSocket(url: string) {
-        return new WebSocket(url, { agent });
+      override async registerClient(client: Parameters<GatewayPlugin["registerClient"]>[0]) {
+        if (!this.gatewayInfo) {
+          try {
+            const response = await undiciFetch("https://discord.com/api/v10/gateway/bot", {
+              headers: {
+                Authorization: `Bot ${client.options.token}`,
+              },
+              dispatcher: fetchAgent,
+            } as Record<string, unknown>);
+            this.gatewayInfo = (await response.json()) as APIGatewayBotInfo;
+          } catch (error) {
+            throw new Error(
+              `Failed to get gateway information from Discord: ${error instanceof Error ? error.message : String(error)}`,
+              { cause: error },
+            );
+          }
+        }
+        return super.registerClient(client);
+      }
+
+      override createWebSocket(url: string) {
+        return new WebSocket(url, { agent: wsAgent });
       }
     }
 

@@ -7,9 +7,6 @@ import {
   resolveAwsSdkEnvVarName,
   resolveEnvApiKey,
 } from "../../agents/model-auth.js";
-import {
-  resolveForwardCompatModel,
-} from "../../agents/model-forward-compat.js";
 import { ensureOpenClawModelsJson } from "../../agents/models-config.js";
 import { ensurePiAuthJsonFromAuthProfiles } from "../../agents/pi-auth-json.js";
 import type { ModelRegistry } from "../../agents/pi-model-discovery.js";
@@ -125,7 +122,6 @@ export async function loadModelRegistry(cfg: OpenClawConfig) {
   }
   return { registry, models, availableKeys, availabilityErrorMessage };
 }
-
 
 export function toModelRow(params: {
   model?: Model<Api>;

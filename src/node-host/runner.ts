@@ -1,6 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
 import { resolveBrowserConfig } from "../browser/config.js";
 import { loadConfig } from "../config/config.js";
 import { GatewayClient } from "../gateway/client.js";
+import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
+import type { SkillBinTrustEntry } from "../infra/exec-approvals.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
@@ -22,30 +26,87 @@ type NodeHostRunOptions = {
   gatewayTlsFingerprint?: string;
   nodeId?: string;
   displayName?: string;
-  /** Explicit gateway auth token (preferred over env var). */
-  token?: string;
-  /** Explicit gateway auth password (preferred over env var). */
-  password?: string;
-  /**
-   * When true, skip all filesystem persistence (config, device identity).
-   * Used when embedding the node host in the --secure mode process.
-   */
-  embedded?: boolean;
 };
 
 const DEFAULT_NODE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
+function isExecutableFile(filePath: string): boolean {
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) {
+      return false;
+    }
+    if (process.platform !== "win32") {
+      fs.accessSync(filePath, fs.constants.X_OK);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveExecutablePathFromEnv(bin: string, pathEnv: string): string | null {
+  if (bin.includes("/") || bin.includes("\\")) {
+    return null;
+  }
+  const hasExtension = process.platform === "win32" && path.extname(bin).length > 0;
+  const extensions =
+    process.platform === "win32"
+      ? hasExtension
+        ? [""]
+        : (process.env.PATHEXT ?? process.env.PathExt ?? ".EXE;.CMD;.BAT;.COM")
+            .split(";")
+            .map((ext) => ext.toLowerCase())
+      : [""];
+  for (const dir of pathEnv.split(path.delimiter).filter(Boolean)) {
+    for (const ext of extensions) {
+      const candidate = path.join(dir, bin + ext);
+      if (isExecutableFile(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function resolveSkillBinTrustEntries(bins: string[], pathEnv: string): SkillBinTrustEntry[] {
+  const trustEntries: SkillBinTrustEntry[] = [];
+  const seen = new Set<string>();
+  for (const bin of bins) {
+    const name = bin.trim();
+    if (!name) {
+      continue;
+    }
+    const resolvedPath = resolveExecutablePathFromEnv(name, pathEnv);
+    if (!resolvedPath) {
+      continue;
+    }
+    const key = `${name}\u0000${resolvedPath}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    trustEntries.push({ name, resolvedPath });
+  }
+  return trustEntries.toSorted(
+    (left, right) =>
+      left.name.localeCompare(right.name) || left.resolvedPath.localeCompare(right.resolvedPath),
+  );
+}
+
 class SkillBinsCache implements SkillBinsProvider {
-  private bins = new Set<string>();
+  private bins: SkillBinTrustEntry[] = [];
   private lastRefresh = 0;
   private readonly ttlMs = 90_000;
   private readonly fetch: () => Promise<string[]>;
+  private readonly pathEnv: string;
 
-  constructor(fetch: () => Promise<string[]>) {
+  constructor(fetch: () => Promise<string[]>, pathEnv: string) {
     this.fetch = fetch;
+    this.pathEnv = pathEnv;
   }
 
-  async current(force = false): Promise<Set<string>> {
+  async current(force = false): Promise<SkillBinTrustEntry[]> {
     if (force || Date.now() - this.lastRefresh > this.ttlMs) {
       await this.refresh();
     }
@@ -55,11 +116,11 @@ class SkillBinsCache implements SkillBinsProvider {
   private async refresh() {
     try {
       const bins = await this.fetch();
-      this.bins = new Set(bins);
+      this.bins = resolveSkillBinTrustEntries(bins, this.pathEnv);
       this.lastRefresh = Date.now();
     } catch {
       if (!this.lastRefresh) {
-        this.bins = new Set();
+        this.bins = [];
       }
     }
   }
@@ -75,64 +136,40 @@ function ensureNodePathEnv(): string {
   return DEFAULT_NODE_PATH;
 }
 
-/**
- * Start the node host and return the GatewayClient (non-blocking).
- * Use this when embedding the node host in another process (e.g. --secure mode).
- */
-export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayClient> {
-  let nodeId: string;
-  let displayName: string;
-  let tls: boolean;
-  let token: string | undefined;
-  let password: string | undefined;
-  let browserProxyEnabled: boolean;
-  let skipDeviceAuth: boolean;
-
-  if (opts.embedded) {
-    // Embedded mode: skip all filesystem persistence and device auth.
-    // Use caller-provided values and authenticate via shared secret only.
-    nodeId = opts.nodeId?.trim() || `embedded-${Date.now()}`;
-    displayName = opts.displayName?.trim() || "Embedded Node Host";
-    tls = opts.gatewayTls ?? false;
-    token = opts.token?.trim() || process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined;
-    password = opts.password?.trim() || process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || undefined;
-    browserProxyEnabled = false;
-    skipDeviceAuth = true;
-  } else {
-    const config = await ensureNodeHostConfig();
-    nodeId = opts.nodeId?.trim() || config.nodeId;
-    if (nodeId !== config.nodeId) {
-      config.nodeId = nodeId;
-    }
-    displayName = opts.displayName?.trim() || config.displayName || (await getMachineDisplayName());
-    config.displayName = displayName;
-
-    const gateway: NodeHostGatewayConfig = {
-      host: opts.gatewayHost,
-      port: opts.gatewayPort,
-      tls: opts.gatewayTls ?? loadConfig().gateway?.tls?.enabled ?? false,
-      tlsFingerprint: opts.gatewayTlsFingerprint,
-    };
-    config.gateway = gateway;
-    await saveNodeHostConfig(config);
-
-    const cfg = loadConfig();
-    const resolvedBrowser = resolveBrowserConfig(cfg.browser, cfg);
-    browserProxyEnabled = cfg.nodeHost?.browserProxy?.enabled !== false && resolvedBrowser.enabled;
-    const isRemoteMode = cfg.gateway?.mode === "remote";
-    tls = gateway.tls ?? false;
-    token =
-      process.env.OPENCLAW_GATEWAY_TOKEN?.trim() ||
-      (isRemoteMode ? cfg.gateway?.remote?.token : cfg.gateway?.auth?.token);
-    password =
-      process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() ||
-      (isRemoteMode ? cfg.gateway?.remote?.password : cfg.gateway?.auth?.password);
-    skipDeviceAuth = false;
+export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
+  const config = await ensureNodeHostConfig();
+  const nodeId = opts.nodeId?.trim() || config.nodeId;
+  if (nodeId !== config.nodeId) {
+    config.nodeId = nodeId;
   }
+  const displayName =
+    opts.displayName?.trim() || config.displayName || (await getMachineDisplayName());
+  config.displayName = displayName;
 
-  const host = opts.gatewayHost ?? "127.0.0.1";
-  const port = opts.gatewayPort ?? 18789;
-  const scheme = tls ? "wss" : "ws";
+  const gateway: NodeHostGatewayConfig = {
+    host: opts.gatewayHost,
+    port: opts.gatewayPort,
+    tls: opts.gatewayTls ?? loadConfig().gateway?.tls?.enabled ?? false,
+    tlsFingerprint: opts.gatewayTlsFingerprint,
+  };
+  config.gateway = gateway;
+  await saveNodeHostConfig(config);
+
+  const cfg = loadConfig();
+  const resolvedBrowser = resolveBrowserConfig(cfg.browser, cfg);
+  const browserProxyEnabled =
+    cfg.nodeHost?.browserProxy?.enabled !== false && resolvedBrowser.enabled;
+  const isRemoteMode = cfg.gateway?.mode === "remote";
+  const token =
+    process.env.OPENCLAW_GATEWAY_TOKEN?.trim() ||
+    (isRemoteMode ? cfg.gateway?.remote?.token : cfg.gateway?.auth?.token);
+  const password =
+    process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() ||
+    (isRemoteMode ? cfg.gateway?.remote?.password : cfg.gateway?.auth?.password);
+
+  const host = gateway.host ?? "127.0.0.1";
+  const port = gateway.port ?? 18789;
+  const scheme = gateway.tls ? "wss" : "ws";
   const url = `${scheme}://${host}:${port}`;
   const pathEnv = ensureNodePathEnv();
   // eslint-disable-next-line no-console
@@ -160,8 +197,8 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
     ],
     pathEnv,
     permissions: undefined,
-    skipDeviceAuth,
-    tlsFingerprint: opts.gatewayTlsFingerprint,
+    deviceIdentity: loadOrCreateDeviceIdentity(),
+    tlsFingerprint: gateway.tlsFingerprint,
     onEvent: (evt) => {
       if (evt.event !== "node.invoke.request") {
         return;
@@ -187,17 +224,8 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
     const res = await client.request<{ bins: Array<unknown> }>("skills.bins", {});
     const bins = Array.isArray(res?.bins) ? res.bins.map((bin) => String(bin)) : [];
     return bins;
-  });
+  }, pathEnv);
 
   client.start();
-  return client;
-}
-
-/**
- * Run the node host standalone (blocks forever).
- * Used by the `openclaw node-host` CLI command.
- */
-export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
-  await startNodeHost(opts);
   await new Promise(() => {});
 }

@@ -7,6 +7,7 @@ import type {
 } from "../config/types.approvals.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { normalizeAccountId, parseAgentSessionKey } from "../routing/session-key.js";
+import { compileSafeRegex } from "../security/safe-regex.js";
 import { isDeliverableMessageChannel, normalizeMessageChannel } from "../utils/message-channel.js";
 import type {
   ExecApprovalDecision,
@@ -29,7 +30,7 @@ type PendingApproval = {
 };
 
 export type ExecApprovalForwarder = {
-  handleRequested: (request: ExecApprovalRequest) => Promise<void>;
+  handleRequested: (request: ExecApprovalRequest) => Promise<boolean>;
   handleResolved: (resolved: ExecApprovalResolved) => Promise<void>;
   stop: () => void;
 };
@@ -52,11 +53,11 @@ function normalizeMode(mode?: ExecApprovalForwardingConfig["mode"]) {
 
 function matchSessionFilter(sessionKey: string, patterns: string[]): boolean {
   return patterns.some((pattern) => {
-    try {
-      return sessionKey.includes(pattern) || new RegExp(pattern).test(sessionKey);
-    } catch {
-      return sessionKey.includes(pattern);
+    if (sessionKey.includes(pattern)) {
+      return true;
     }
+    const regex = compileSafeRegex(pattern);
+    return regex ? regex.test(sessionKey) : false;
   });
 }
 
@@ -166,6 +167,9 @@ function buildRequestMessage(request: ExecApprovalRequest, nowMs: number) {
   }
   if (request.request.cwd) {
     lines.push(`CWD: ${request.request.cwd}`);
+  }
+  if (request.request.nodeId) {
+    lines.push(`Node: ${request.request.nodeId}`);
   }
   if (request.request.host) {
     lines.push(`Host: ${request.request.host}`);
@@ -318,11 +322,11 @@ export function createExecApprovalForwarder(
   const resolveSessionTarget = deps.resolveSessionTarget ?? defaultResolveSessionTarget;
   const pending = new Map<string, PendingApproval>();
 
-  const handleRequested = async (request: ExecApprovalRequest) => {
+  const handleRequested = async (request: ExecApprovalRequest): Promise<boolean> => {
     const cfg = getConfig();
     const config = cfg.approvals?.exec;
     if (!shouldForward({ config, request })) {
-      return;
+      return false;
     }
     const filteredTargets = resolveForwardTargets({
       cfg,
@@ -332,7 +336,7 @@ export function createExecApprovalForwarder(
     }).filter((target) => !shouldSkipDiscordForwarding(target, cfg));
 
     if (filteredTargets.length === 0) {
-      return;
+      return false;
     }
 
     const expiresInMs = Math.max(0, request.expiresAtMs - nowMs());
@@ -353,17 +357,20 @@ export function createExecApprovalForwarder(
     pending.set(request.id, pendingEntry);
 
     if (pending.get(request.id) !== pendingEntry) {
-      return;
+      return false;
     }
 
     const text = buildRequestMessage(request, nowMs());
-    await deliverToTargets({
+    void deliverToTargets({
       cfg,
       targets: filteredTargets,
       text,
       deliver,
       shouldSend: () => pending.get(request.id) === pendingEntry,
+    }).catch((err) => {
+      log.error(`exec approvals: failed to deliver request ${request.id}: ${String(err)}`);
     });
+    return true;
   };
 
   const handleResolved = async (resolved: ExecApprovalResolved) => {
