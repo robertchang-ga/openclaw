@@ -37,6 +37,9 @@ const SAMPLE_RATE = 48_000;
 const CHANNELS = 2;
 const PLAYBACK_READY_TIMEOUT_MS = 15_000;
 const SPEAKING_READY_TIMEOUT_MS = 60_000;
+const DECRYPT_FAILURE_WINDOW_MS = 30_000;
+const DECRYPT_FAILURE_RECONNECT_THRESHOLD = 3;
+const DECRYPT_FAILURE_PATTERN = /DecryptionFailed\(/;
 
 /** Resolve the Speaches WebSocket URL for realtime STT. */
 function resolveSpeachesRealtimeUrl(cfg: OpenClawConfig): string {
@@ -104,6 +107,9 @@ type VoiceSessionEntry = {
   processingQueue: Promise<void>;
   activeSpeakers: Set<string>;
   realtimeSTT: RealtimeSTT | null;
+  decryptFailureCount: number;
+  lastDecryptFailureAt: number;
+  decryptRecoveryInFlight: boolean;
   stop: () => void;
 };
 
@@ -305,18 +311,21 @@ export class DiscordVoiceManager {
     }
 
     const adapterCreator = voicePlugin.getGatewayAdapterCreator(guildId);
+    const daveEncryption = this.params.discordConfig.voice?.daveEncryption;
+    const decryptionFailureTolerance = this.params.discordConfig.voice?.decryptionFailureTolerance;
     const connection = joinVoiceChannel({
       channelId,
       guildId,
       adapterCreator,
       selfDeaf: false,
       selfMute: false,
-      // @discordjs/voice 0.19.x DAVE receive decryption is broken (GitHub #11419).
-      // All packets fail with DecryptionFailed(UnencryptedWhenPassthroughDisabled).
-      // Falls back to standard XSalsa20 transport encryption (still encrypted).
-      // TODO: re-enable when @discordjs/voice ships a fix (DAVE enforced March 2 2026).
-      daveEncryption: false,
+      // DAVE encryption: configurable via channels.discord.voice.daveEncryption.
+      // Defaults to enabled (undefined = library default). Set to false to disable.
+      ...(daveEncryption === false ? { daveEncryption: false } : {}),
     });
+    logVoiceVerbose(
+      `join: settings encryption=${daveEncryption === false ? "off" : "on"} tolerance=${decryptionFailureTolerance === false ? "off" : "on"}`,
+    );
 
     try {
       await entersState(connection, VoiceConnectionStatus.Ready, PLAYBACK_READY_TIMEOUT_MS);
@@ -356,6 +365,9 @@ export class DiscordVoiceManager {
       processingQueue: Promise.resolve(),
       activeSpeakers: new Set(),
       realtimeSTT: null,
+      decryptFailureCount: 0,
+      lastDecryptFailureAt: 0,
+      decryptRecoveryInFlight: false,
       stop: () => {
         entry.realtimeSTT?.destroy();
         player.stop();
@@ -469,6 +481,33 @@ export class DiscordVoiceManager {
       logger.warn(`discord voice: playback error: ${formatErrorMessage(err)}`);
     });
 
+    // ─── DAVE decrypt failure tracking ─────────────────────────────
+    if (decryptionFailureTolerance !== false) {
+      connection.on("error" as never, (err: Error) => {
+        const msg = err?.message ?? String(err);
+        if (!DECRYPT_FAILURE_PATTERN.test(msg)) {
+          return;
+        }
+        const now = Date.now();
+        if (now - entry.lastDecryptFailureAt > DECRYPT_FAILURE_WINDOW_MS) {
+          entry.decryptFailureCount = 0;
+        }
+        entry.lastDecryptFailureAt = now;
+        entry.decryptFailureCount += 1;
+        if (entry.decryptFailureCount === 1) {
+          logger.warn(
+            "discord voice: DAVE decrypt failures detected; voice receive may be unstable (upstream: discordjs/discord.js#11419)",
+          );
+        }
+        if (
+          entry.decryptFailureCount >= DECRYPT_FAILURE_RECONNECT_THRESHOLD &&
+          !entry.decryptRecoveryInFlight
+        ) {
+          this.recoverFromDecryptFailures(entry);
+        }
+      });
+    }
+
     this.sessions.set(guildId, entry);
     return {
       ok: true,
@@ -504,6 +543,36 @@ export class DiscordVoiceManager {
       entry.stop();
     }
     this.sessions.clear();
+  }
+
+  private async recoverFromDecryptFailures(entry: VoiceSessionEntry) {
+    const active = this.sessions.get(entry.guildId);
+    if (!active || active.connection !== entry.connection) {
+      return;
+    }
+    entry.decryptRecoveryInFlight = true;
+    logger.warn(
+      `discord voice: repeated decrypt failures; attempting rejoin for guild ${entry.guildId} channel ${entry.channelId}`,
+    );
+    try {
+      const leaveResult = await this.leave({ guildId: entry.guildId });
+      if (!leaveResult.ok) {
+        logger.warn(`discord voice: rejoin leave step failed: ${leaveResult.message}`);
+        return;
+      }
+      const joinResult = await this.join({ guildId: entry.guildId, channelId: entry.channelId });
+      if (!joinResult.ok) {
+        logger.warn(`discord voice: rejoin after decrypt failures failed: ${joinResult.message}`);
+      } else {
+        logger.info(
+          `discord voice: rejoin after decrypt failures succeeded for guild ${entry.guildId}`,
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        `discord voice: rejoin recovery error: ${formatErrorMessage(err)}`,
+      );
+    }
   }
 
   private enqueueProcessing(entry: VoiceSessionEntry, task: () => Promise<void>) {
