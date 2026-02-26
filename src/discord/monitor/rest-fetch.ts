@@ -3,6 +3,9 @@ import { danger } from "../../globals.js";
 import { wrapFetchWithAbortSignal } from "../../infra/fetch.js";
 import type { RuntimeEnv } from "../../runtime.js";
 
+/** ws-relay+ scheme prefix used by sanitize-secrets.ts in secure mode. */
+const WS_RELAY_PREFIX = "ws-relay+";
+
 export function resolveDiscordRestFetch(
   proxyUrl: string | undefined,
   runtime: RuntimeEnv,
@@ -11,11 +14,17 @@ export function resolveDiscordRestFetch(
   if (!proxy) {
     return fetch;
   }
+  // In secure mode, sanitize-secrets.ts sets the proxy to ws-relay+http://...
+  // The relay container is a WebSocket relay, NOT an HTTP CONNECT proxy.
+  // REST requests must use the default fetch (container has bridge network
+  // access) — ProxyAgent would hang because the relay doesn't support CONNECT.
+  // The ws-relay endpoint is only for the Discord gateway WebSocket.
+  if (proxy.startsWith(WS_RELAY_PREFIX)) {
+    runtime.log?.("discord: rest proxy skipped (ws-relay mode, using direct fetch)");
+    return fetch;
+  }
   try {
-    // In secure mode, sanitize-secrets.ts may set the proxy to ws-relay+http://...
-    // Strip the ws-relay+ prefix; the relay container is a standard HTTP proxy.
-    const resolvedProxy = proxy.replace(/^ws-relay\+/, "");
-    const agent = new ProxyAgent(resolvedProxy);
+    const agent = new ProxyAgent(proxy);
     const fetcher = ((input: RequestInfo | URL, init?: RequestInit) =>
       undiciFetch(input as string | URL, {
         ...(init as Record<string, unknown>),

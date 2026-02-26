@@ -53,8 +53,10 @@ export function createDiscordGatewayPlugin(params: {
     // This signals that the proxy provides a WebSocket relay endpoint at /ws-relay
     // which handles TLS termination and secret injection for the Discord gateway.
     const resolvedProxy = isWsRelay ? proxy.slice(WS_RELAY_PREFIX.length) : proxy;
-    // REST API uses standard HTTP forward proxy (works for both modes).
-    const fetchAgent = new ProxyAgent(resolvedProxy);
+    // REST API: in ws-relay mode, the relay doesn't support HTTP CONNECT so
+    // ProxyAgent would hang. Use default fetch (container has bridge network).
+    // In standard proxy mode, use ProxyAgent for the gateway bot info request.
+    const fetchAgent = isWsRelay ? null : new ProxyAgent(resolvedProxy);
     // Gateway WebSocket: use ws-relay endpoint or standard CONNECT tunnel.
     const wsAgent = isWsRelay ? null : new HttpsProxyAgent<string>(resolvedProxy);
     // The proxy auth token for the ws-relay endpoint.
@@ -76,7 +78,7 @@ export function createDiscordGatewayPlugin(params: {
               headers: {
                 Authorization: `Bot ${client.options.token}`,
               },
-              dispatcher: fetchAgent,
+              ...(fetchAgent ? { dispatcher: fetchAgent } : {}),
             } as Record<string, unknown>);
             this.gatewayInfo = (await response.json()) as APIGatewayBotInfo;
           } catch (error) {
