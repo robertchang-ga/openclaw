@@ -111,6 +111,8 @@ type VoiceSessionEntry = {
   lastDecryptFailureAt: number;
   decryptRecoveryInFlight: boolean;
   lastSpeakerId?: string;
+  pendingTranscripts?: Array<{ text: string; speakerId?: string }>;
+  transcriptDebounceTimer?: ReturnType<typeof setTimeout> | null;
   stop: () => void;
 };
 
@@ -396,9 +398,31 @@ export class DiscordVoiceManager {
         logger.info(
           `realtime transcript (${text.length} chars): guild ${guildId} channel ${channelId} user ${speakerId ?? "unknown"}`,
         );
-        this.enqueueProcessing(entry, async () => {
-          await this.processTranscript({ entry, transcript: text, userId: speakerId });
-        });
+
+        // Debounce: accumulate rapid-fire transcripts for 1.5s before
+        // sending to the agent. This prevents partial utterances from
+        // each triggering separate agent calls.
+        entry.pendingTranscripts = entry.pendingTranscripts ?? [];
+        entry.pendingTranscripts.push({ text, speakerId });
+        if (entry.transcriptDebounceTimer) {
+          clearTimeout(entry.transcriptDebounceTimer);
+        }
+        entry.transcriptDebounceTimer = setTimeout(() => {
+          const pending = entry.pendingTranscripts ?? [];
+          entry.pendingTranscripts = [];
+          entry.transcriptDebounceTimer = null;
+          if (pending.length === 0) return;
+
+          // Merge all pending transcripts into a single prompt.
+          const mergedText = pending.map((p) => p.text).join(" ");
+          const lastSpeaker = pending[pending.length - 1].speakerId;
+          logger.info(
+            `debounced transcript (${mergedText.length} chars, ${pending.length} segments): guild ${guildId}`,
+          );
+          this.enqueueProcessing(entry, async () => {
+            await this.processTranscript({ entry, transcript: mergedText, userId: lastSpeaker });
+          });
+        }, 1500);
       },
       onSpeechStart: () => {
         // Interrupt current playback when user starts speaking
@@ -747,8 +771,9 @@ export class DiscordVoiceManager {
             runId,
             extraSystemPrompt:
               "You are in a live voice conversation. Reply with plain spoken text ONLY. " +
-              "Do NOT use the tts tool — your text response will be converted to speech automatically. " +
-              "Keep responses concise and conversational.",
+              "Do NOT use the tts tool \u2014 your text response will be converted to speech automatically. " +
+              "Keep responses concise and conversational. " +
+              "When using cognee or memory tools, briefly say what you're doing first (e.g. 'Let me look that up.').",
           },
           this.params.runtime,
         );
@@ -788,8 +813,9 @@ export class DiscordVoiceManager {
           deliver: false,
           extraSystemPrompt:
             "You are in a live voice conversation. Reply with plain spoken text ONLY. " +
-            "Do NOT use the tts tool — your text response will be converted to speech automatically. " +
-            "Keep responses concise and conversational.",
+            "Do NOT use the tts tool \u2014 your text response will be converted to speech automatically. " +
+            "Keep responses concise and conversational. " +
+            "When using cognee or memory tools, briefly say what you're doing first (e.g. 'Let me look that up.').",
         },
         this.params.runtime,
       );
