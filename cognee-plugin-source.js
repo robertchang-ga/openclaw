@@ -538,6 +538,14 @@ const memoryCogneePlugin = {
             api.on("before_agent_start", async (event, ctx) => {
                 // Wait for state to load (fixes race condition on first agent run)
                 await stateReady;
+
+                // Skip recall for voice channel sessions — adds ~37s latency
+                // that makes voice interactions unusable.
+                if (ctx.sessionKey && ctx.sessionKey.includes("discord:channel:1475851746550087775")) {
+                    api.logger.debug?.("memory-cognee: skipping recall (voice channel)");
+                    return;
+                }
+
                 if (!event.prompt || event.prompt.length < 5) {
                     api.logger.debug?.("memory-cognee: skipping recall (prompt too short)");
                     return;
