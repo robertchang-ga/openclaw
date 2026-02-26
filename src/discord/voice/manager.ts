@@ -743,7 +743,7 @@ export class DiscordVoiceManager {
       });
 
       try {
-        logger.info(`agent command: sending prompt to agent ${entry.route.agentId}`);
+        logger.info(`agent command: sending prompt to agent ${entry.route.agentId} session=${entry.route.sessionKey}`);
         const result = await agentCommand(
           {
             message: prompt,
@@ -755,6 +755,7 @@ export class DiscordVoiceManager {
           },
           this.params.runtime,
         );
+        logger.info(`agent result: payloads=${(result?.payloads ?? []).length} meta=${JSON.stringify(result?.meta ?? {}).slice(0, 200)}`);
 
         // Flush any remaining buffered text after the LLM completes.
         // If the event listener didn't capture anything (non-streaming model),
