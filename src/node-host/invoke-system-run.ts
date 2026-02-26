@@ -16,6 +16,7 @@ import {
   type ExecAsk,
   type ExecCommandSegment,
   type ExecSecurity,
+  type HostExecBinRule,
   type SkillBinTrustEntry,
 } from "../infra/exec-approvals.js";
 import type { ExecHostRequest, ExecHostResponse, ExecHostRunResult } from "../infra/exec-host.js";
@@ -463,9 +464,38 @@ async function evaluateSystemRunPolicyPhase(
     security: configuredSecurity,
     ask: configuredAsk,
   });
-  const security = approvals.agent.security;
-  const ask = approvals.agent.ask;
+  let security = approvals.agent.security;
+  let ask = approvals.agent.ask;
   const autoAllowSkills = approvals.agent.autoAllowSkills;
+
+  // hostExecBins override: if the command binary is in the hostExecBins list,
+  // treat it as explicitly trusted — force security=full and ask=off.
+  // This mirrors the pre-merge behavior removed by the upstream refactor.
+  // Only applies to simple argv commands (no shell wrappers) to prevent bypasses.
+  if (parsed.shellCommand === null && parsed.argv.length > 0 && approvals.hostExecBins.size > 0) {
+    const rawBin = parsed.argv[0] ?? "";
+    const binName = path.basename(rawBin).toLowerCase();
+    const binRule: HostExecBinRule | undefined = binName ? approvals.hostExecBins.get(binName) : undefined;
+    if (binRule !== undefined) {
+      const subcommand = parsed.argv[1]?.toLowerCase() ?? "";
+      const hostExecBinAllowed = (() => {
+        if (binRule.allow !== null) {
+          // allow-list mode: only listed subcommands pass
+          return binRule.allow.size === 0 || binRule.allow.has(subcommand);
+        }
+        if (binRule.deny !== null) {
+          // deny-list mode: blocked subcommands fail
+          return !binRule.deny.has(subcommand);
+        }
+        // no filter: all subcommands allowed
+        return true;
+      })();
+      if (hostExecBinAllowed) {
+        security = "full";
+        ask = "off";
+      }
+    }
+  }
   const { safeBins, safeBinProfiles, trustedSafeBinDirs } = resolveExecSafeBinRuntimePolicy({
     global: cfg.tools?.exec,
     local: agentExec,
