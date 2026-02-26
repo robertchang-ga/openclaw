@@ -3,8 +3,6 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import type { Readable } from "node:stream";
-import { RealtimeSTT, resample48kStereoTo24kMono } from "./realtime-stt.js";
 import { ChannelType, type Client, ReadyListener } from "@buape/carbon";
 import type { VoicePlugin } from "@buape/carbon/voice";
 import {
@@ -18,34 +16,25 @@ import {
   type AudioPlayer,
   type VoiceConnection,
 } from "@discordjs/voice";
-import { resolveAgentDir } from "../../agents/agent-scope.js";
-import type { MsgContext } from "../../auto-reply/templating.js";
 import { agentCommand } from "../../commands/agent.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { DiscordAccountConfig, TtsConfig } from "../../config/types.js";
-import { logVerbose, shouldLogVerbose } from "../../globals.js";
+import { logVerbose } from "../../globals.js";
 import { onAgentEvent } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { resolvePreferredOpenClawTmpDir } from "../../infra/tmp-openclaw-dir.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import {
-  buildProviderRegistry,
-  createMediaAttachmentCache,
-  normalizeMediaAttachments,
-  runCapability,
-} from "../../media-understanding/runner.js";
 import { resolveAgentRoute } from "../../routing/resolve-route.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { parseTtsDirectives } from "../../tts/tts-core.js";
 import { kokoroTTSBuffer, resolveKokoroConfig } from "../../tts/tts-kokoro.js";
 import { resolveTtsConfig, textToSpeech, type ResolvedTtsConfig } from "../../tts/tts.js";
+import { RealtimeSTT, resample48kStereoTo24kMono } from "./realtime-stt.js";
 
 const require = createRequire(import.meta.url);
 
 const SAMPLE_RATE = 48_000;
 const CHANNELS = 2;
-const BIT_DEPTH = 16;
-const MIN_SEGMENT_SECONDS = 0.35;
 const PLAYBACK_READY_TIMEOUT_MS = 15_000;
 const SPEAKING_READY_TIMEOUT_MS = 60_000;
 
@@ -67,7 +56,9 @@ function resolveSpeachesRealtimeUrl(cfg: OpenClawConfig): string {
         parsed.pathname = "/v1/realtime";
       }
       return parsed.toString().replace(/\/$/, "");
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
   }
   // Default: local Speaches on host port
   return "ws://localhost:8090/v1/realtime";
@@ -79,8 +70,12 @@ function resolveWhisperModel(cfg: OpenClawConfig): string {
   const audioModels = cfg.tools?.media?.audio?.models;
   if (audioModels && audioModels.length > 0) {
     const first = audioModels[0];
-    if (typeof first === "object" && first.model) return first.model;
-    if (typeof first === "string") return first;
+    if (typeof first === "object" && first.model) {
+      return first.model;
+    }
+    if (typeof first === "string") {
+      return first;
+    }
   }
   return process.env.SPEACHES_MODEL || "Systran/faster-distil-whisper-large-v3";
 }
@@ -109,10 +104,6 @@ type VoiceSessionEntry = {
   processingQueue: Promise<void>;
   activeSpeakers: Set<string>;
   realtimeSTT: RealtimeSTT | null;
-  /** Debounce timer for batching rapid STT transcripts into one LLM call. */
-  transcriptDebounceTimer: ReturnType<typeof setTimeout> | null;
-  /** Accumulated transcripts during the debounce window. */
-  transcriptBuffer: string[];
   stop: () => void;
 };
 
@@ -166,26 +157,6 @@ function resolveVoiceTtsConfig(params: { cfg: OpenClawConfig; override?: TtsConf
   return { cfg, resolved: resolveTtsConfig(cfg) };
 }
 
-function buildWavBuffer(pcm: Buffer): Buffer {
-  const blockAlign = (CHANNELS * BIT_DEPTH) / 8;
-  const byteRate = SAMPLE_RATE * blockAlign;
-  const header = Buffer.alloc(44);
-  header.write("RIFF", 0);
-  header.writeUInt32LE(36 + pcm.length, 4);
-  header.write("WAVE", 8);
-  header.write("fmt ", 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(CHANNELS, 22);
-  header.writeUInt32LE(SAMPLE_RATE, 24);
-  header.writeUInt32LE(byteRate, 28);
-  header.writeUInt16LE(blockAlign, 32);
-  header.writeUInt16LE(BIT_DEPTH, 34);
-  header.write("data", 36);
-  header.writeUInt32LE(pcm.length, 40);
-  return Buffer.concat([header, pcm]);
-}
-
 type OpusDecoder = {
   decode: (buffer: Buffer) => Buffer;
 };
@@ -219,107 +190,6 @@ function createOpusDecoder(): { decoder: OpusDecoder; name: string } | null {
     }
   }
   return null;
-}
-
-async function decodeOpusStream(stream: Readable): Promise<Buffer> {
-  const selected = createOpusDecoder();
-  if (!selected) {
-    logger.info("opus decode: no decoder available");
-    return Buffer.alloc(0);
-  }
-  logger.info(`opus decode: using ${selected.name}`);
-  const chunks: Buffer[] = [];
-  try {
-    for await (const chunk of stream) {
-      if (!chunk || !(chunk instanceof Buffer) || chunk.length === 0) {
-        continue;
-      }
-      const decoded = selected.decoder.decode(chunk);
-      if (decoded && decoded.length > 0) {
-        chunks.push(Buffer.from(decoded));
-      }
-    }
-  } catch (err) {
-    logger.info(`opus decode: error: ${formatErrorMessage(err)}`);
-  }
-  const result = chunks.length > 0 ? Buffer.concat(chunks) : Buffer.alloc(0);
-  logger.info(`opus decode: ${chunks.length} chunks, ${result.length} bytes PCM`);
-  return result;
-}
-
-function estimateDurationSeconds(pcm: Buffer): number {
-  const bytesPerSample = (BIT_DEPTH / 8) * CHANNELS;
-  if (bytesPerSample <= 0) {
-    return 0;
-  }
-  return pcm.length / (bytesPerSample * SAMPLE_RATE);
-}
-
-async function writeWavFile(pcm: Buffer): Promise<{ path: string; durationSeconds: number }> {
-  const tempDir = await fs.mkdtemp(path.join(resolvePreferredOpenClawTmpDir(), "discord-voice-"));
-  const filePath = path.join(tempDir, `segment-${randomUUID()}.wav`);
-  const wav = buildWavBuffer(pcm);
-  await fs.writeFile(filePath, wav);
-  scheduleTempCleanup(tempDir);
-  const durationSeconds = estimateDurationSeconds(pcm);
-  logger.info(`wav write: ${filePath} (${wav.length} bytes, ${durationSeconds.toFixed(2)}s)`);
-  return { path: filePath, durationSeconds };
-}
-
-function scheduleTempCleanup(tempDir: string, delayMs: number = 30 * 60 * 1000): void {
-  const timer = setTimeout(() => {
-    fs.rm(tempDir, { recursive: true, force: true }).catch((err) => {
-      if (shouldLogVerbose()) {
-        logVerbose(`discord voice: temp cleanup failed for ${tempDir}: ${formatErrorMessage(err)}`);
-      }
-    });
-  }, delayMs);
-  timer.unref();
-}
-
-async function transcribeAudio(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-  filePath: string;
-}): Promise<string | undefined> {
-  const ctx: MsgContext = {
-    MediaPath: params.filePath,
-    MediaType: "audio/wav",
-  };
-  const attachments = normalizeMediaAttachments(ctx);
-  if (attachments.length === 0) {
-    logger.info(`transcribe: no attachments for ${params.filePath}`);
-    return undefined;
-  }
-  const audioConfig = params.cfg.tools?.media?.audio;
-  logger.info(
-    `transcribe: ${attachments.length} attachment(s), audio enabled=${audioConfig?.enabled}, models=${JSON.stringify(audioConfig?.models?.length ?? 0)}`,
-  );
-  const cache = createMediaAttachmentCache(attachments);
-  const providerRegistry = buildProviderRegistry();
-  try {
-    const result = await runCapability({
-      capability: "audio",
-      cfg: params.cfg,
-      ctx,
-      attachments: cache,
-      media: attachments,
-      agentDir: resolveAgentDir(params.cfg, params.agentId),
-      providerRegistry,
-      config: audioConfig,
-    });
-    const attempts = result.decision.attachments?.flatMap((a) =>
-      a.attempts.map((t) => `${t.provider ?? t.type ?? "?"}:${t.outcome}${t.reason ? `(${t.reason})` : ""}`),
-    );
-    logger.info(
-      `transcribe: decision=${result.decision.outcome}, outputs=${result.outputs.length}, attempts=[${attempts?.join(", ") ?? "none"}]`,
-    );
-    const output = result.outputs.find((entry) => entry.kind === "audio.transcription");
-    const text = output?.text?.trim();
-    return text || undefined;
-  } finally {
-    await cache.cleanup();
-  }
 }
 
 export class DiscordVoiceManager {
@@ -486,13 +356,7 @@ export class DiscordVoiceManager {
       processingQueue: Promise.resolve(),
       activeSpeakers: new Set(),
       realtimeSTT: null,
-      transcriptDebounceTimer: null,
-      transcriptBuffer: [],
       stop: () => {
-        if (entry.transcriptDebounceTimer) {
-          clearTimeout(entry.transcriptDebounceTimer);
-          entry.transcriptDebounceTimer = null;
-        }
         entry.realtimeSTT?.destroy();
         player.stop();
         connection.destroy();
@@ -510,24 +374,9 @@ export class DiscordVoiceManager {
         logger.info(
           `realtime transcript (${text.length} chars): guild ${guildId} channel ${channelId}`,
         );
-        // Batch rapid transcripts: accumulate over a 3-second window
-        // and send as one combined message to the LLM.
-        entry.transcriptBuffer.push(text);
-        if (entry.transcriptDebounceTimer) {
-          clearTimeout(entry.transcriptDebounceTimer);
-        }
-        entry.transcriptDebounceTimer = setTimeout(() => {
-          const segments = entry.transcriptBuffer.length;
-          const combined = entry.transcriptBuffer.join(" ");
-          entry.transcriptBuffer = [];
-          entry.transcriptDebounceTimer = null;
-          logger.info(
-            `batched transcript (${combined.length} chars, ${segments} segments): guild ${guildId}`,
-          );
-          this.enqueueProcessing(entry, async () => {
-            await this.processTranscript({ entry, transcript: combined });
-          });
-        }, 3_000);
+        this.enqueueProcessing(entry, async () => {
+          await this.processTranscript({ entry, transcript: text });
+        });
       },
       onSpeechStart: () => {
         // Interrupt current playback when user starts speaking
@@ -540,7 +389,9 @@ export class DiscordVoiceManager {
 
     // Connect the realtime STT WebSocket
     stt.connect().catch((err) => {
-      logger.warn(`discord voice: realtime STT connect failed: ${formatErrorMessage(err)}, falling back to batch mode`);
+      logger.warn(
+        `discord voice: realtime STT connect failed: ${formatErrorMessage(err)}, falling back to batch mode`,
+      );
     });
 
     // Pipe all incoming audio to the realtime STT
@@ -550,8 +401,12 @@ export class DiscordVoiceManager {
     }
 
     const speakingHandler = (userId: string) => {
-      if (this.botUserId && userId === this.botUserId) return;
-      if (entry.activeSpeakers.has(userId)) return;
+      if (this.botUserId && userId === this.botUserId) {
+        return;
+      }
+      if (entry.activeSpeakers.has(userId)) {
+        return;
+      }
       entry.activeSpeakers.add(userId);
 
       logger.info(`capture start: guild ${guildId} channel ${channelId} user ${userId}`);
@@ -560,12 +415,14 @@ export class DiscordVoiceManager {
       const stream = connection.receiver.subscribe(userId, {
         end: {
           behavior: EndBehaviorType.AfterSilence,
-          duration: 2_000, // Keep stream alive longer; VAD handles segmentation
+          duration: 500,
         },
       });
 
       stream.on("data", (chunk: Buffer) => {
-        if (!chunk || chunk.length === 0 || !opusDecoder || !stt.isConnected) return;
+        if (!chunk || chunk.length === 0 || !opusDecoder || !stt.isConnected) {
+          return;
+        }
         try {
           const pcm48k = opusDecoder.decoder.decode(chunk);
           if (pcm48k && pcm48k.length > 0) {
@@ -664,17 +521,14 @@ export class DiscordVoiceManager {
   /**
    * Process a transcript received from the realtime STT WebSocket.
    */
-  private async processTranscript(params: {
-    entry: VoiceSessionEntry;
-    transcript: string;
-  }) {
+  private async processTranscript(params: { entry: VoiceSessionEntry; transcript: string }) {
     const { entry, transcript } = params;
-    if (!transcript || transcript.length < 2) return;
+    if (!transcript || transcript.length < 2) {
+      return;
+    }
 
     const prompt = transcript;
-    logger.info(
-      `prompt: "${prompt.slice(0, 80)}${prompt.length > 80 ? "..." : ""}"`,
-    );
+    logger.info(`prompt: "${prompt.slice(0, 80)}${prompt.length > 80 ? "..." : ""}"`);
 
     // Resolve TTS config upfront to determine streaming path.
     const { cfg: ttsCfg, resolved: ttsConfig } = resolveVoiceTtsConfig({
@@ -682,7 +536,7 @@ export class DiscordVoiceManager {
       override: this.params.discordConfig.voice?.tts,
     });
     const isKokoro = ttsConfig.provider === "kokoro";
-    logger.info(`tts path: ${isKokoro ? "kokoro (streaming)" : ttsConfig.provider ?? "default"}`);
+    logger.info(`tts path: ${isKokoro ? "kokoro (streaming)" : (ttsConfig.provider ?? "default")}`);
 
     if (isKokoro) {
       // ─── Streaming TTS path (kokoro) ──────────────────────────────────
@@ -715,9 +569,13 @@ export class DiscordVoiceManager {
             `kokoro sentence #${sentenceNum} (${sentence.length} chars): guild ${entry.guildId}`,
           );
 
-          // Enqueue TTS generation + playback for this sentence.
+          // Start TTS generation immediately (parallel with prior playback).
+          const audioPromise = kokoroTTSBuffer(sentence, kokoroConfig);
+
+          // Enqueue playback: awaits the pre-generated audio, which may
+          // already be ready by the time the previous sentence finishes.
           this.enqueuePlayback(entry, async () => {
-            const wavBuf = await kokoroTTSBuffer(sentence, kokoroConfig);
+            const wavBuf = await audioPromise;
             const tempRoot = resolvePreferredOpenClawTmpDir();
             mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
             const tempDir = mkdtempSync(path.join(tempRoot, "tts-stream-"));
@@ -752,8 +610,10 @@ export class DiscordVoiceManager {
           logger.info(
             `kokoro flush #${sentenceNum} (${remaining.length} chars): guild ${entry.guildId}`,
           );
+          // Start generation eagerly, same as the sentence path.
+          const flushAudioPromise = kokoroTTSBuffer(remaining, kokoroConfig);
           this.enqueuePlayback(entry, async () => {
-            const wavBuf = await kokoroTTSBuffer(remaining, kokoroConfig);
+            const wavBuf = await flushAudioPromise;
             const tempRoot = resolvePreferredOpenClawTmpDir();
             mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
             const tempDir = mkdtempSync(path.join(tempRoot, "tts-stream-"));
@@ -819,13 +679,9 @@ export class DiscordVoiceManager {
         splitAndSpeak(true);
 
         if (sentenceCount === 0) {
-          logger.info(
-            `reply empty: guild ${entry.guildId} channel ${entry.channelId}`,
-          );
+          logger.info(`reply empty: guild ${entry.guildId} channel ${entry.channelId}`);
         } else {
-          logger.info(
-            `kokoro done (${sentenceCount} sentences): guild ${entry.guildId}`,
-          );
+          logger.info(`kokoro done (${sentenceCount} sentences): guild ${entry.guildId}`);
         }
       } finally {
         unsubscribe();
@@ -850,9 +706,7 @@ export class DiscordVoiceManager {
         .trim();
 
       if (!replyText) {
-        logger.info(
-          `reply empty: guild ${entry.guildId} channel ${entry.channelId}`,
-        );
+        logger.info(`reply empty: guild ${entry.guildId} channel ${entry.channelId}`);
         return;
       }
       logger.info(
@@ -862,9 +716,7 @@ export class DiscordVoiceManager {
       const directive = parseTtsDirectives(replyText, ttsConfig.modelOverrides);
       const speakText = directive.overrides.ttsText ?? directive.cleanedText.trim();
       if (!speakText) {
-        logger.info(
-          `tts skipped (empty): guild ${entry.guildId} channel ${entry.channelId}`,
-        );
+        logger.info(`tts skipped (empty): guild ${entry.guildId} channel ${entry.channelId}`);
         return;
       }
 
