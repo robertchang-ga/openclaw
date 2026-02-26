@@ -109,14 +109,10 @@ export type DiscordVoiceConfig = {
   autoJoin?: DiscordVoiceAutoJoinConfig[];
   /** Enable/disable DAVE end-to-end encryption (default: true; Discord may require this). */
   daveEncryption?: boolean;
-  /** Consecutive decrypt failures before DAVE session reinitialization (default: 24). */
+  /** Consecutive decrypt failures before DAVE session reinitialization (default: 24). Set to 0 to disable. */
   decryptionFailureTolerance?: number;
   /** Optional TTS overrides for Discord voice output. */
   tts?: TtsConfig;
-  /** Enable DAVE end-to-end encryption for voice (default: library default / true). Set to false to disable. */
-  daveEncryption?: boolean;
-  /** Enable auto-rejoin recovery after repeated DAVE decrypt failures (default: true). Set to false to disable. */
-  decryptionFailureTolerance?: boolean;
 };
 
 export type DiscordExecApprovalConfig = {

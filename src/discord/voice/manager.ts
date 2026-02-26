@@ -110,6 +110,7 @@ type VoiceSessionEntry = {
   decryptFailureCount: number;
   lastDecryptFailureAt: number;
   decryptRecoveryInFlight: boolean;
+  lastSpeakerId?: string;
   stop: () => void;
 };
 
@@ -324,7 +325,7 @@ export class DiscordVoiceManager {
       ...(daveEncryption === false ? { daveEncryption: false } : {}),
     });
     logVoiceVerbose(
-      `join: settings encryption=${daveEncryption === false ? "off" : "on"} tolerance=${decryptionFailureTolerance === false ? "off" : "on"}`,
+      `join: settings encryption=${daveEncryption === false ? "off" : "on"} tolerance=${decryptionFailureTolerance ?? "default"}`,
     );
 
     try {
@@ -383,11 +384,12 @@ export class DiscordVoiceManager {
       model: whisperModel,
       language: this.params.cfg.tools?.media?.audio?.language,
       onTranscript: (text: string) => {
+        const speakerId = entry.lastSpeakerId;
         logger.info(
-          `realtime transcript (${text.length} chars): guild ${guildId} channel ${channelId}`,
+          `realtime transcript (${text.length} chars): guild ${guildId} channel ${channelId} user ${speakerId ?? "unknown"}`,
         );
         this.enqueueProcessing(entry, async () => {
-          await this.processTranscript({ entry, transcript: text });
+          await this.processTranscript({ entry, transcript: text, userId: speakerId });
         });
       },
       onSpeechStart: () => {
@@ -420,6 +422,7 @@ export class DiscordVoiceManager {
         return;
       }
       entry.activeSpeakers.add(userId);
+      entry.lastSpeakerId = userId;
 
       logger.info(`capture start: guild ${guildId} channel ${channelId} user ${userId}`);
 
@@ -482,7 +485,7 @@ export class DiscordVoiceManager {
     });
 
     // ─── DAVE decrypt failure tracking ─────────────────────────────
-    if (decryptionFailureTolerance !== false) {
+    if (decryptionFailureTolerance !== 0) {
       connection.on("error" as never, (err: Error) => {
         const msg = err?.message ?? String(err);
         if (!DECRYPT_FAILURE_PATTERN.test(msg)) {
@@ -575,6 +578,20 @@ export class DiscordVoiceManager {
     }
   }
 
+  private async resolveSpeakerLabel(guildId: string, userId: string): Promise<string | undefined> {
+    try {
+      const member = await this.params.client.fetchMember(guildId, userId);
+      return member.nickname ?? member.user?.globalName ?? member.user?.username ?? userId;
+    } catch {
+      try {
+        const user = await this.params.client.fetchUser(userId);
+        return user.globalName ?? user.username ?? userId;
+      } catch {
+        return userId;
+      }
+    }
+  }
+
   private enqueueProcessing(entry: VoiceSessionEntry, task: () => Promise<void>) {
     entry.processingQueue = entry.processingQueue
       .then(task)
@@ -590,13 +607,20 @@ export class DiscordVoiceManager {
   /**
    * Process a transcript received from the realtime STT WebSocket.
    */
-  private async processTranscript(params: { entry: VoiceSessionEntry; transcript: string }) {
-    const { entry, transcript } = params;
+  private async processTranscript(params: { entry: VoiceSessionEntry; transcript: string; userId?: string }) {
+    const { entry, transcript, userId } = params;
     if (!transcript || transcript.length < 2) {
       return;
     }
 
-    const prompt = transcript;
+    // Resolve speaker label (Discord nickname > global name > username > userId)
+    let prompt = transcript;
+    if (userId) {
+      const speakerLabel = await this.resolveSpeakerLabel(entry.guildId, userId);
+      if (speakerLabel) {
+        prompt = `${speakerLabel}: ${transcript}`;
+      }
+    }
     logger.info(`prompt: "${prompt.slice(0, 80)}${prompt.length > 80 ? "..." : ""}"`);
 
     // Resolve TTS config upfront to determine streaming path.
@@ -818,20 +842,6 @@ export class DiscordVoiceManager {
         );
         logger.info(`playback done: guild ${entry.guildId} channel ${entry.channelId}`);
       });
-    }
-  }
-
-  private async resolveSpeakerLabel(guildId: string, userId: string): Promise<string | undefined> {
-    try {
-      const member = await this.params.client.fetchMember(guildId, userId);
-      return member.nickname ?? member.user?.globalName ?? member.user?.username ?? userId;
-    } catch {
-      try {
-        const user = await this.params.client.fetchUser(userId);
-        return user.globalName ?? user.username ?? userId;
-      } catch {
-        return userId;
-      }
     }
   }
 }
