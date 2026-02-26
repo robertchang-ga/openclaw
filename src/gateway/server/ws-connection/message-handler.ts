@@ -641,7 +641,21 @@ export function attachGatewayWsMessageHandler(params: {
           controlUiAuthPolicy,
           sharedAuthOk,
           trustedProxyAuthOk,
-        );
+        ) || (() => {
+          // Embedded node host pairing bypass: in --secure mode the host process generates
+          // a per-session token and passes it to the container as OPENCLAW_EMBEDDED_NODE_HOST_TOKEN.
+          // When the embedded node host connects with this token and role="node", skip pairing
+          // since it's a trusted same-machine connection managed by the host process.
+          if (role !== "node" || !sharedAuthOk) {
+            return false;
+          }
+          const embeddedToken = process.env.OPENCLAW_EMBEDDED_NODE_HOST_TOKEN?.trim();
+          if (!embeddedToken) {
+            return false;
+          }
+          const clientToken = connectParams.auth?.token?.trim();
+          return Boolean(clientToken && clientToken === embeddedToken);
+        })();
         if (device && devicePublicKey && !skipPairing) {
           const formatAuditList = (items: string[] | undefined): string => {
             if (!items || items.length === 0) {
