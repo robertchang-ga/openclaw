@@ -26,6 +26,15 @@ type NodeHostRunOptions = {
   gatewayTlsFingerprint?: string;
   nodeId?: string;
   displayName?: string;
+  /** Explicit gateway auth token (preferred over env var). */
+  token?: string;
+  /** Explicit gateway auth password (preferred over env var). */
+  password?: string;
+  /**
+   * When true, skip all filesystem persistence (config, device identity).
+   * Used when embedding the node host in the --secure mode process.
+   */
+  embedded?: boolean;
 };
 
 const DEFAULT_NODE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -134,6 +143,113 @@ function ensureNodePathEnv(): string {
   }
   process.env.PATH = DEFAULT_NODE_PATH;
   return DEFAULT_NODE_PATH;
+}
+
+/**
+ * Start the node host and return the GatewayClient (non-blocking).
+ * Use this when embedding the node host in another process (e.g. --secure mode).
+ */
+export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayClient> {
+  let nodeId: string;
+  let displayName: string;
+  let tls: boolean;
+  let token: string | undefined;
+  let password: string | undefined;
+  let browserProxyEnabled: boolean;
+  let skipDeviceAuth = false;
+
+  if (opts.embedded) {
+    // Embedded mode: use provided values directly, skip filesystem persistence.
+    nodeId = opts.nodeId?.trim() || "embedded-node-host";
+    displayName = opts.displayName?.trim() || "Embedded Node Host";
+    tls = opts.gatewayTls ?? false;
+    token = opts.token;
+    password = opts.password;
+    browserProxyEnabled = false;
+    skipDeviceAuth = true;
+  } else {
+    const config = await ensureNodeHostConfig();
+    nodeId = opts.nodeId?.trim() || config.nodeId;
+    displayName =
+      opts.displayName?.trim() || config.displayName || (await getMachineDisplayName());
+    const cfg = loadConfig();
+    const resolvedBrowser = resolveBrowserConfig(cfg.browser, cfg);
+    browserProxyEnabled =
+      cfg.nodeHost?.browserProxy?.enabled !== false && resolvedBrowser.enabled;
+    tls = opts.gatewayTls ?? cfg.gateway?.tls?.enabled ?? false;
+    const isRemoteMode = cfg.gateway?.mode === "remote";
+    token =
+      opts.token ??
+      process.env.OPENCLAW_GATEWAY_TOKEN?.trim() ??
+      (isRemoteMode ? cfg.gateway?.remote?.token : cfg.gateway?.auth?.token);
+    password =
+      opts.password ??
+      process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() ??
+      (isRemoteMode ? cfg.gateway?.remote?.password : cfg.gateway?.auth?.password);
+    skipDeviceAuth = false;
+  }
+
+  const host = opts.gatewayHost ?? "127.0.0.1";
+  const port = opts.gatewayPort ?? 18789;
+  const scheme = tls ? "wss" : "ws";
+  const url = `${scheme}://${host}:${port}`;
+  const pathEnv = ensureNodePathEnv();
+  // eslint-disable-next-line no-console
+  console.log(`node host PATH: ${pathEnv}`);
+
+  const client = new GatewayClient({
+    url,
+    token: token?.trim() || undefined,
+    password: password?.trim() || undefined,
+    instanceId: nodeId,
+    clientName: GATEWAY_CLIENT_NAMES.NODE_HOST,
+    clientDisplayName: displayName,
+    clientVersion: VERSION,
+    platform: process.platform,
+    mode: GATEWAY_CLIENT_MODES.NODE,
+    role: "node",
+    scopes: [],
+    caps: ["system", ...(browserProxyEnabled ? ["browser"] : [])],
+    commands: [
+      "system.run",
+      "system.which",
+      "system.execApprovals.get",
+      "system.execApprovals.set",
+      ...(browserProxyEnabled ? ["browser.proxy"] : []),
+    ],
+    pathEnv,
+    permissions: undefined,
+    skipDeviceAuth,
+    tlsFingerprint: opts.gatewayTlsFingerprint,
+    onEvent: (evt) => {
+      if (evt.event !== "node.invoke.request") {
+        return;
+      }
+      const payload = coerceNodeInvokePayload(evt.payload);
+      if (!payload) {
+        return;
+      }
+      void handleInvoke(payload, client, skillBins);
+    },
+    onConnectError: (err) => {
+      // keep retrying (handled by GatewayClient)
+      // eslint-disable-next-line no-console
+      console.error(`node host gateway connect failed: ${err.message}`);
+    },
+    onClose: (code, reason) => {
+      // eslint-disable-next-line no-console
+      console.error(`node host gateway closed (${code}): ${reason}`);
+    },
+  });
+
+  const skillBins = new SkillBinsCache(async () => {
+    const res = await client.request<{ bins: Array<unknown> }>("skills.bins", {});
+    const bins = Array.isArray(res?.bins) ? res.bins.map((bin) => String(bin)) : [];
+    return bins;
+  }, pathEnv);
+
+  client.start();
+  return client;
 }
 
 export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
