@@ -320,6 +320,24 @@ class CogneeClient {
             return record.data_id;
         return this.extractDataId(record.data_ingestion_info);
     }
+    async listDatasets() {
+        return this.fetchJson("/api/v1/datasets", {
+            method: "GET",
+            headers: this.buildHeaders(),
+        });
+    }
+    async deleteData(params = {}) {
+        const query = new URLSearchParams();
+        if (params.datasetId) query.set("dataset_id", params.datasetId);
+        const qs = query.toString();
+        return this.fetchJson(`/api/v1/delete${qs ? `?${qs}` : ""}`, {
+            method: "DELETE",
+            headers: {
+                "Content-Type": "application/json",
+                ...this.buildHeaders(),
+            },
+        });
+    }
 }
 // ---------------------------------------------------------------------------
 // Unified sync logic
@@ -471,13 +489,18 @@ const memoryCogneePlugin = {
         // ------------------------------------------------------------------
         api.registerTool({
             name: "cognee_search",
-            description: "Search long-term memory and knowledge base for relevant context. Use when you need to recall past conversations, stored knowledge, or specific topics. Returns the most relevant memory entries.",
+            description: "Search long-term memory and knowledge base for relevant context. Use when you need to recall past conversations, stored knowledge, or specific topics.",
             parameters: {
                 type: "object",
                 properties: {
                     query: {
                         type: "string",
                         description: "The search query describing what you want to recall",
+                    },
+                    searchType: {
+                        type: "string",
+                        description: "Search strategy. Options: TEMPORAL (time-aware, default), GRAPH_COMPLETION (LLM-powered with graph context), RAG_COMPLETION (LLM answer from chunks), CHUNKS (fast raw text), SUMMARIES (hierarchical summaries), FEELING_LUCKY (auto-select best)",
+                        enum: ["TEMPORAL", "GRAPH_COMPLETION", "RAG_COMPLETION", "CHUNKS", "SUMMARIES", "FEELING_LUCKY"],
                     },
                 },
                 required: ["query"],
@@ -497,10 +520,11 @@ const memoryCogneePlugin = {
                         details: { error: "no dataset" },
                     };
                 }
+                const searchType = typeof params.searchType === "string" ? params.searchType : cfg.searchType;
                 try {
                     const results = await client.search({
                         queryText: query,
-                        searchType: cfg.searchType,
+                        searchType,
                         datasetIds: [datasetId],
                         maxTokens: cfg.maxTokens,
                     });
@@ -526,6 +550,67 @@ const memoryCogneePlugin = {
                     api.logger.warn?.(`memory-cognee: tool search failed: ${String(error)}`);
                     return {
                         content: [{ type: "text", text: `Memory search failed: ${String(error)}` }],
+                        details: { error: String(error) },
+                    };
+                }
+            },
+        });
+        // ------------------------------------------------------------------
+        // Tool: cognee_datasets — list available knowledge datasets
+        // ------------------------------------------------------------------
+        api.registerTool({
+            name: "cognee_datasets",
+            description: "List available Cognee knowledge datasets. Use to discover what knowledge collections exist before searching or deleting.",
+            parameters: {
+                type: "object",
+                properties: {},
+            },
+            async execute() {
+                try {
+                    const datasets = await client.listDatasets();
+                    return {
+                        content: [{ type: "text", text: JSON.stringify(datasets, null, 2) }],
+                        details: { datasetCount: Array.isArray(datasets) ? datasets.length : 0 },
+                    };
+                } catch (error) {
+                    api.logger.warn?.(`memory-cognee: list datasets failed: ${String(error)}`);
+                    return {
+                        content: [{ type: "text", text: `Failed to list datasets: ${String(error)}` }],
+                        details: { error: String(error) },
+                    };
+                }
+            },
+        });
+        // ------------------------------------------------------------------
+        // Tool: cognee_delete — delete data from knowledge base
+        // ------------------------------------------------------------------
+        api.registerTool({
+            name: "cognee_delete",
+            description: "Delete data from the Cognee knowledge base. Use when asked to forget or remove specific knowledge. Can delete an entire dataset.",
+            parameters: {
+                type: "object",
+                properties: {
+                    datasetId: {
+                        type: "string",
+                        description: "ID of the dataset to delete. Use cognee_datasets to find available dataset IDs.",
+                    },
+                },
+            },
+            async execute(_id, params) {
+                const dsId = typeof params.datasetId === "string" ? params.datasetId.trim() : undefined;
+                try {
+                    const result = await client.deleteData({ datasetId: dsId });
+                    if (dsId === datasetId) {
+                        datasetId = undefined;
+                    }
+                    return {
+                        content: [{ type: "text", text: `Data deleted successfully.\n${JSON.stringify(result, null, 2)}` }],
+                        details: result,
+                    };
+                } catch (error) {
+                    api.logger.warn?.(`memory-cognee: delete failed: ${String(error)}`);
+                    return {
+                        content: [{ type: "text", text: `Delete failed: ${String(error)}` }],
                         details: { error: String(error) },
                     };
                 }
