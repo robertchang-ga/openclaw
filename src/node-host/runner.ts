@@ -166,7 +166,9 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
     token = opts.token;
     password = opts.password;
     browserProxyEnabled = false;
-    skipDeviceAuth = true;
+    // Node role requires device identity (upstream security policy), so we
+    // always provide one even in embedded mode. This is safe because the
+    // embedded node host runs on the actual host machine.
   } else {
     const config = await ensureNodeHostConfig();
     nodeId = opts.nodeId?.trim() || config.nodeId;
@@ -219,7 +221,7 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
     ],
     pathEnv,
     permissions: undefined,
-    skipDeviceAuth,
+    deviceIdentity: loadOrCreateDeviceIdentity(),
     tlsFingerprint: opts.gatewayTlsFingerprint,
     onEvent: (evt) => {
       if (evt.event !== "node.invoke.request") {
