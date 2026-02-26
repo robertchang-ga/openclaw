@@ -10,6 +10,9 @@ BRANCH="${1:-feat/security-proxy}"
 echo "==> Pulling $BRANCH..."
 git pull origin "$BRANCH"
 
+echo "==> Installing dependencies..."
+pnpm install
+
 echo "==> Building TypeScript..."
 pnpm build
 
