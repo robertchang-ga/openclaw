@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveBrowserConfig } from "../browser/config.js";
 import { loadConfig } from "../config/config.js";
+import { resolveStateDir } from "../config/paths.js";
 import { GatewayClient } from "../gateway/client.js";
 import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 import type { SkillBinTrustEntry } from "../infra/exec-approvals.js";
@@ -221,7 +222,11 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
     ],
     pathEnv,
     permissions: undefined,
-    deviceIdentity: loadOrCreateDeviceIdentity(),
+    deviceIdentity: loadOrCreateDeviceIdentity(
+      opts.embedded
+        ? path.join(resolveStateDir(), "identity", "embedded-node-host.json")
+        : undefined,
+    ),
     tlsFingerprint: opts.gatewayTlsFingerprint,
     onEvent: (evt) => {
       if (evt.event !== "node.invoke.request") {
