@@ -45,6 +45,8 @@ export class VoiceBridgeClient {
   private readonly baseUrl: string;
   private readonly wsUrl: string;
   private readonly options: VoiceBridgeClientOptions;
+  /** Settable callback for opcode 4 relay from sidecar → main gateway. */
+  onSendVoicePayload: ((payload: Record<string, unknown>) => void) | null = null;
 
   constructor(options: VoiceBridgeClientOptions) {
     this.options = options;
@@ -130,11 +132,30 @@ export class VoiceBridgeClient {
           `Voice session connected: guild ${event.guildId} channel ${event.channelId}`,
         );
         break;
+      case "send_voice_payload":
+        this.onSendVoicePayload?.(event.payload);
+        break;
       case "error":
         logger.warn(`Voice sidecar error: ${event.message}`);
         break;
       default:
         break;
+    }
+  }
+
+  // ─── Voice Relay (Gateway → Sidecar) ───────────────────────
+
+  /** Forward a VOICE_STATE_UPDATE event from the main gateway to the sidecar. */
+  sendVoiceStateUpdate(data: Record<string, unknown>): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "voice_state_update", data }));
+    }
+  }
+
+  /** Forward a VOICE_SERVER_UPDATE event from the main gateway to the sidecar. */
+  sendVoiceServerUpdate(data: Record<string, unknown>): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "voice_server_update", data }));
     }
   }
 

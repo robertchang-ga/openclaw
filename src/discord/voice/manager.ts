@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { ChannelType, type Client, ReadyListener } from "@buape/carbon";
+import { ChannelType, type Client, ReadyListener, VoiceStateUpdateListener, VoiceServerUpdateListener } from "@buape/carbon";
+import { type GatewayPlugin } from "@buape/carbon/gateway";
 import type { VoicePlugin } from "@buape/carbon/voice";
 import {
   AudioPlayerStatus,
@@ -274,7 +275,68 @@ export class DiscordVoiceManager {
         },
       });
       this.bridgeClient.connect();
+
+      // ── Voice state relay: forward VoicePlugin events to the sidecar ──
+      // The main gateway has the sole Discord gateway connection.  We hook
+      // into VoicePlugin's adapter map so that VOICE_STATE_UPDATE and
+      // VOICE_SERVER_UPDATE events are forwarded to the sidecar via the
+      // bridge WebSocket.  The sidecar never opens its own Discord gateway.
+      this.setupVoiceRelay();
     }
+  }
+
+  /**
+   * Wire the voice state relay between the main gateway's Discord connection
+   * and the sidecar via the bridge WebSocket.
+   *
+   * - VOICE_STATE_UPDATE / VOICE_SERVER_UPDATE → sidecar (via bridge WS)
+   * - send_voice_payload (opcode 4) from sidecar → Discord gateway
+   */
+  private setupVoiceRelay(): void {
+    const gateway = this.params.client.getPlugin<GatewayPlugin>("gateway");
+    if (!gateway) {
+      logger.warn("Voice relay: GatewayPlugin not available");
+      return;
+    }
+
+    const bridge = this.bridgeClient!;
+
+    // Handle opcode 4 relay from sidecar → Discord gateway.
+    // When the sidecar's @discordjs/voice calls sendPayload(), the sidecar
+    // sends a "send_voice_payload" message via the bridge WS.  We receive
+    // it here and send it through the main gateway's Discord connection.
+    bridge.onSendVoicePayload = (payload) => {
+      try {
+        (gateway as unknown as { send(p: unknown, skipRL?: boolean): void }).send(payload, true);
+      } catch (err) {
+        logger.warn(`Voice relay: failed to send opcode 4: ${String(err)}`);
+      }
+    };
+
+    // Register listeners that forward voice state events to the sidecar.
+    // @buape/carbon's VoicePlugin already registers its own listeners for
+    // local adapters; our additional listeners also relay the raw data to
+    // the sidecar via the bridge WS.
+    class RelayVoiceStateUpdate extends VoiceStateUpdateListener {
+      async handle(data: { guild_id?: string } & Record<string, unknown>): Promise<void> {
+        if (data.guild_id) {
+          bridge.sendVoiceStateUpdate(data);
+        }
+      }
+    }
+
+    class RelayVoiceServerUpdate extends VoiceServerUpdateListener {
+      async handle(data: { guild_id?: string } & Record<string, unknown>): Promise<void> {
+        if (data.guild_id) {
+          bridge.sendVoiceServerUpdate(data);
+        }
+      }
+    }
+
+    this.params.client.registerListener(new RelayVoiceStateUpdate());
+    this.params.client.registerListener(new RelayVoiceServerUpdate());
+
+    logger.info("Voice state relay wired: main gateway ↔ sidecar");
   }
 
   setBotUserId(id?: string) {

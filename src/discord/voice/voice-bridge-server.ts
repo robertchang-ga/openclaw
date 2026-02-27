@@ -25,10 +25,9 @@ import {
   joinVoiceChannel,
   type AudioPlayer,
   type VoiceConnection,
+  type DiscordGatewayAdapterCreator,
+  type DiscordGatewayAdapterLibraryMethods,
 } from "@discordjs/voice";
-import { Client, type Plugin } from "@buape/carbon";
-import { type GatewayPlugin } from "@buape/carbon/gateway";
-import { VoicePlugin } from "@buape/carbon/voice";
 import { WebSocketServer, WebSocket } from "ws";
 import { RealtimeSTT, resample48kStereoTo24kMono } from "./realtime-stt.js";
 import type {
@@ -125,9 +124,10 @@ export class VoiceBridgeServer {
   private wss: WebSocketServer | null = null;
   private httpServer: http.Server | null = null;
   private gatewayWs: WebSocket | null = null;
-  private client: Client | null = null;
   private botUserId?: string;
   private config: VoiceBridgeConfig;
+  /** Adapters for relaying voice state events from the main gateway. */
+  private adapters = new Map<string, DiscordGatewayAdapterLibraryMethods>();
 
   constructor(config: VoiceBridgeConfig) {
     this.config = config;
@@ -136,8 +136,8 @@ export class VoiceBridgeServer {
   // ─── Lifecycle ───────────────────────────────────────────────
 
   async start(): Promise<void> {
-    // Initialize Discord client (voice-only — just needs gateway for voice)
-    await this.initDiscordClient();
+    // Fetch bot identity via REST (no gateway connection needed).
+    await this.initBotIdentity();
 
     // Start HTTP + WebSocket server for gateway communication
     this.startServer();
@@ -171,56 +171,78 @@ export class VoiceBridgeServer {
     log.info("Voice bridge server stopped");
   }
 
-  // ─── Discord Client ────────────────────────────────────────
+  // ─── Bot Identity (REST only — NO gateway connection) ──────
 
-  private async initDiscordClient(): Promise<void> {
+  private async initBotIdentity(): Promise<void> {
     const token = this.config.discordToken;
     if (!token) {
       throw new Error("Discord bot token is required for voice sidecar");
     }
 
-    // Import the gateway plugin creator from the monitor
-    // Voice sidecar needs a minimal Discord gateway connection
-    const { createDiscordGatewayPlugin } = await import("../monitor/gateway-plugin.js");
-
-    const plugins: Plugin[] = [
-      createDiscordGatewayPlugin({
-        discordConfig: {} as never, // Minimal config — voice only
-        runtime: {
-          log: (...args: unknown[]) => log.info(args.map(String).join(" ")),
-          error: (...args: unknown[]) => log.error(args.map(String).join(" ")),
-          exit: (code: number) => process.exit(code),
-        },
-      }),
-      new VoicePlugin(),
-    ];
-
-    this.client = new Client(
-      {
-        baseUrl: "http://localhost",
-        deploySecret: "a",
-        clientId: "voice-sidecar",
-        publicKey: "a",
-        token,
-        autoDeploy: false,
-      },
-      { commands: [], listeners: [] },
-      plugins,
-    );
-
-    // Fetch bot user ID
+    // Fetch bot user ID via REST API — the sidecar has bridge network access.
     try {
-      const botUser = await this.client.fetchUser("@me");
-      this.botUserId = botUser?.id;
-      log.info(`Discord client ready as ${this.botUserId ?? "unknown"}`);
+      const res = await fetch("https://discord.com/api/v10/users/@me", {
+        headers: { Authorization: `Bot ${token}` },
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { id: string };
+        this.botUserId = data.id;
+        log.info(`Discord client ready as ${this.botUserId}`);
+      } else {
+        log.warn(`Failed to fetch bot identity: HTTP ${res.status}`);
+      }
     } catch (err) {
       log.warn(`Failed to fetch bot identity: ${String(err)}`);
     }
+  }
 
-    // Start the gateway connection
-    const gateway = this.client.getPlugin<GatewayPlugin>("gateway");
-    if (gateway) {
-      await (gateway as unknown as { connect: () => Promise<void> }).connect();
+  // ─── Relay Adapter Creator ────────────────────────────────
+
+  /**
+   * Creates a DiscordGatewayAdapterCreator that relays voice state events
+   * through the bridge WebSocket instead of using a direct Discord gateway.
+   *
+   * - sendPayload → sends "send_voice_payload" to the main gateway via WS
+   * - onVoiceStateUpdate/onVoiceServerUpdate ← received from main gateway via WS
+   */
+  private createRelayAdapterCreator(guildId: string): DiscordGatewayAdapterCreator {
+    return (methods: DiscordGatewayAdapterLibraryMethods) => {
+      this.adapters.set(guildId, methods);
+      return {
+        sendPayload: (payload: { op: number; d: unknown }) => {
+          if (!this.gatewayWs || this.gatewayWs.readyState !== WebSocket.OPEN) {
+            log.warn(`Cannot send voice payload for guild ${guildId}: no gateway WS`);
+            return false;
+          }
+          this.gatewayWs.send(
+            JSON.stringify({ type: "send_voice_payload", payload }),
+          );
+          return true;
+        },
+        destroy: () => {
+          this.adapters.delete(guildId);
+        },
+      };
+    };
+  }
+
+  /**
+   * Handle an incoming bridge WS message that relays a voice state event
+   * from the main gateway.
+   */
+  private handleRelayEvent(event: VoiceBridgeEvent): void {
+    if (event.type === "voice_state_update") {
+      const data = event.data as Record<string, unknown>;
+      const guildId = data.guild_id as string | undefined;
+      if (guildId) {
+        this.adapters.get(guildId)?.onVoiceStateUpdate(data as never);
+      }
+    } else if (event.type === "voice_server_update") {
+      const data = event.data as Record<string, unknown>;
+      const guildId = data.guild_id as string | undefined;
+      if (guildId) {
+        this.adapters.get(guildId)?.onVoiceServerUpdate(data as never);
+      }
     }
   }
 
@@ -243,6 +265,14 @@ export class VoiceBridgeServer {
     this.wss.on("connection", (ws) => {
       log.info("Gateway WebSocket connected");
       this.gatewayWs = ws;
+      ws.on("message", (data) => {
+        try {
+          const event: VoiceBridgeEvent = JSON.parse(data.toString());
+          this.handleRelayEvent(event);
+        } catch (err) {
+          log.warn(`Invalid relay event: ${String(err)}`);
+        }
+      });
       ws.on("close", () => {
         log.info("Gateway WebSocket disconnected");
         if (this.gatewayWs === ws) {
@@ -333,8 +363,8 @@ export class VoiceBridgeServer {
   private async handleJoin(
     params: VoiceBridgeJoinRequest,
   ): Promise<VoiceBridgeOperationResult> {
-    if (!this.client) {
-      return { ok: false, message: "Discord client not initialized" };
+    if (!this.gatewayWs || this.gatewayWs.readyState !== WebSocket.OPEN) {
+      return { ok: false, message: "Gateway WebSocket not connected" };
     }
 
     const { guildId, channelId } = params;
@@ -350,12 +380,7 @@ export class VoiceBridgeServer {
       await this.handleLeave({ guildId });
     }
 
-    const voicePlugin = this.client.getPlugin<VoicePlugin>("voice");
-    if (!voicePlugin) {
-      return { ok: false, message: "Discord voice plugin not available" };
-    }
-
-    const adapterCreator = voicePlugin.getGatewayAdapterCreator(guildId);
+    const adapterCreator = this.createRelayAdapterCreator(guildId);
     const connection = joinVoiceChannel({
       channelId,
       guildId,

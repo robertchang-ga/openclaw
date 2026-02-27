@@ -52,7 +52,10 @@ export type VoiceBridgeEventType =
   | "speech_end"
   | "session_connected"
   | "session_disconnected"
-  | "error";
+  | "error"
+  | "voice_state_update"
+  | "voice_server_update"
+  | "send_voice_payload";
 
 export type VoiceBridgeTranscriptEvent = {
   type: "transcript";
@@ -94,13 +97,45 @@ export type VoiceBridgeErrorEvent = {
   message: string;
 };
 
+// ---------------------------------------------------------------------------
+// Gateway → Sidecar  (voice state relay — replaces sidecar's own GW conn)
+// ---------------------------------------------------------------------------
+
+/** Forwarded VOICE_STATE_UPDATE from the main gateway's Discord connection. */
+export type VoiceBridgeVoiceStateUpdateEvent = {
+  type: "voice_state_update";
+  /** Raw VOICE_STATE_UPDATE dispatch data */
+  data: Record<string, unknown>;
+};
+
+/** Forwarded VOICE_SERVER_UPDATE from the main gateway's Discord connection. */
+export type VoiceBridgeVoiceServerUpdateEvent = {
+  type: "voice_server_update";
+  /** Raw VOICE_SERVER_UPDATE dispatch data */
+  data: Record<string, unknown>;
+};
+
+// ---------------------------------------------------------------------------
+// Sidecar → Gateway  (opcode 4 relay — sidecar asks gateway to send)
+// ---------------------------------------------------------------------------
+
+/** Request from sidecar for the main gateway to send an opcode 4 payload. */
+export type VoiceBridgeSendVoicePayloadEvent = {
+  type: "send_voice_payload";
+  /** The raw gateway payload object (@discordjs/voice opcode 4) */
+  payload: Record<string, unknown>;
+};
+
 export type VoiceBridgeEvent =
   | VoiceBridgeTranscriptEvent
   | VoiceBridgeSpeechStartEvent
   | VoiceBridgeSpeechEndEvent
   | VoiceBridgeSessionConnectedEvent
   | VoiceBridgeSessionDisconnectedEvent
-  | VoiceBridgeErrorEvent;
+  | VoiceBridgeErrorEvent
+  | VoiceBridgeVoiceStateUpdateEvent
+  | VoiceBridgeVoiceServerUpdateEvent
+  | VoiceBridgeSendVoicePayloadEvent;
 
 // ---------------------------------------------------------------------------
 // Configuration
