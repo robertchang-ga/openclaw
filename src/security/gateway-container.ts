@@ -596,6 +596,29 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
   );
   await execDocker(args);
 
+  // Fix ownership of bind-mount-created directories.
+  // Docker creates intermediate mount-point directories as root (e.g., when mounting
+  // conversations:rw, Docker creates /agents/main/agent/ as root:root).
+  // The gateway process runs as 'node' and needs write access for:
+  // - auth.json (model catalog / compaction API key resolution)
+  // - session files (conversation persistence)
+  // Without this, auto-compaction silently cancels (no API key → cancel) and
+  // context grows unbounded.
+  try {
+    await execDocker([
+      "exec",
+      "--user",
+      "root",
+      GATEWAY_CONTAINER_NAME,
+      "chown",
+      "-R",
+      "node:node",
+      "/home/node/.openclaw",
+    ]);
+  } catch (err) {
+    logger.warn(`Failed to fix .openclaw ownership (compaction may not work): ${String(err)}`);
+  }
+
   // NOTE: The gateway container is NOT connected to the bridge network.
   // Discord voice connections (WSS + UDP) are handled by the voice sidecar
   // container, which has bridge access but no conversation context or secrets.
