@@ -283,8 +283,17 @@ export async function startSecretsProxy(opts: SecretsProxyOptions): Promise<http
         return;
       }
 
-      // CRITICAL: Resolve placeholders in the URL (e.g., for Telegram bot token in path)
-      const targetUrl = await replacePlaceholders(rawTargetUrl, registry);
+      // CRITICAL: Resolve placeholders in the URL (e.g., for Telegram bot token in path).
+      // URL-decode first: fetchWithSsrFGuard percent-encodes curly braces in URL paths
+      // (e.g. {{CONFIG:channels.telegram.token}} → %7B%7BCONFIG:channels.telegram.token%7D%7D)
+      // which prevents the placeholder regex from matching.
+      let decodedTargetUrl: string;
+      try {
+        decodedTargetUrl = decodeURIComponent(rawTargetUrl);
+      } catch {
+        decodedTargetUrl = rawTargetUrl; // malformed %-sequence; use as-is
+      }
+      const targetUrl = await replacePlaceholders(decodedTargetUrl, registry);
 
       // Validate target URL before checking allowlist
       let parsedUrl: URL;
