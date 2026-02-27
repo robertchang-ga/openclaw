@@ -31,7 +31,7 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm rebuild @discordjs/opus 2>&1 || echo "opus native build skipped"
 
 # Copy source and build
-COPY --chown=node:node tsconfig.json ./
+COPY --chown=node:node tsconfig.json tsdown.config.ts ./
 COPY --chown=node:node src ./src
 
 # Only compile TypeScript — skip canvas bundle, hook scripts, and other
