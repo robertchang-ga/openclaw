@@ -317,18 +317,39 @@ export class DiscordVoiceManager {
     // @buape/carbon's VoicePlugin already registers its own listeners for
     // local adapters; our additional listeners also relay the raw data to
     // the sidecar via the bridge WS.
+    //
+    // IMPORTANT: Carbon's listener `data` objects are rich objects with
+    // circular references (Client, Guild, etc.).  We must extract only the
+    // raw Discord fields that @discordjs/voice needs; serialising the whole
+    // object would throw "Converting circular structure to JSON".
     class RelayVoiceStateUpdate extends VoiceStateUpdateListener {
-      async handle(data: { guild_id?: string } & Record<string, unknown>): Promise<void> {
-        if (data.guild_id) {
-          bridge.sendVoiceStateUpdate(data);
+      async handle(data: Record<string, unknown>): Promise<void> {
+        const guildId = data.guild_id as string | undefined;
+        if (guildId) {
+          bridge.sendVoiceStateUpdate({
+            guild_id: guildId,
+            channel_id: data.channel_id ?? null,
+            session_id: data.session_id,
+            user_id: data.user_id,
+            deaf: data.deaf,
+            mute: data.mute,
+            self_deaf: data.self_deaf,
+            self_mute: data.self_mute,
+            suppress: data.suppress,
+          } as Record<string, unknown>);
         }
       }
     }
 
     class RelayVoiceServerUpdate extends VoiceServerUpdateListener {
-      async handle(data: { guild_id?: string } & Record<string, unknown>): Promise<void> {
-        if (data.guild_id) {
-          bridge.sendVoiceServerUpdate(data);
+      async handle(data: Record<string, unknown>): Promise<void> {
+        const guildId = data.guild_id as string | undefined;
+        if (guildId) {
+          bridge.sendVoiceServerUpdate({
+            guild_id: guildId,
+            token: data.token,
+            endpoint: data.endpoint,
+          } as Record<string, unknown>);
         }
       }
     }
