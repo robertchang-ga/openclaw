@@ -387,7 +387,10 @@ export class VoiceBridgeServer {
       adapterCreator,
       selfDeaf: false,
       selfMute: false,
-      ...(this.config.daveEncryption === false ? { daveEncryption: false } : {}),
+      // Work around @discordjs/voice 0.19.x DAVE E2E bug — same as manager.ts
+      // commit ef25cfbc. Disabling DAVE falls back to XSalsa20 transport
+      // encryption (still encrypted, just not E2E).
+      daveEncryption: false,
     });
 
     try {
