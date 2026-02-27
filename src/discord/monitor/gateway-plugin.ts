@@ -74,12 +74,22 @@ export function createDiscordGatewayPlugin(params: {
       override async registerClient(client: Parameters<GatewayPlugin["registerClient"]>[0]) {
         if (!this.gatewayInfo) {
           try {
-            const response = await undiciFetch("https://discord.com/api/v10/gateway/bot", {
-              headers: {
-                Authorization: `Bot ${client.options.token}`,
-              },
-              ...(fetchAgent ? { dispatcher: fetchAgent } : {}),
-            } as Record<string, unknown>);
+            // In ws-relay mode (fetchAgent = null) the gateway container has no bridge network
+            // access; use globalThis.fetch (= secureFetch inside the container) so the request
+            // routes through the relay proxy and the Discord token placeholder is replaced.
+            // In standard CONNECT-proxy mode use undiciFetch + ProxyAgent dispatcher as before.
+            const response = fetchAgent
+              ? await undiciFetch("https://discord.com/api/v10/gateway/bot", {
+                  headers: {
+                    Authorization: `Bot ${client.options.token}`,
+                  },
+                  dispatcher: fetchAgent,
+                } as Record<string, unknown>)
+              : await fetch("https://discord.com/api/v10/gateway/bot", {
+                  headers: {
+                    Authorization: `Bot ${client.options.token}`,
+                  },
+                });
             this.gatewayInfo = (await response.json()) as APIGatewayBotInfo;
           } catch (error) {
             throw new Error(

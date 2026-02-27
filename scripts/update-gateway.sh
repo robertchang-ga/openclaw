@@ -12,18 +12,36 @@ for arg in "$@"; do
   [ "$arg" = "--full" ] && FULL=true
 done
 
-# Record lockfile hash before pull to detect dep changes.
-LOCK_BEFORE=$(md5sum pnpm-lock.yaml 2>/dev/null | cut -d' ' -f1 || echo "none")
+# Guard against infinite re-exec loop (set by the re-exec block below).
+RERAN="${_OPENCLAW_UPDATE_RERAN:-}"
 
-echo "==> Pulling $BRANCH..."
-git pull origin "$BRANCH"
+if [ -z "$RERAN" ]; then
+  # Record lockfile hash before pull to detect dep changes.
+  LOCK_BEFORE=$(md5sum pnpm-lock.yaml 2>/dev/null | cut -d' ' -f1 || echo "none")
+  # Record this script's hash before pull so we can detect if it changed.
+  SCRIPT_BEFORE=$(md5sum "$0" 2>/dev/null | cut -d' ' -f1 || echo "none")
 
-LOCK_AFTER=$(md5sum pnpm-lock.yaml 2>/dev/null | cut -d' ' -f1 || echo "none")
+  echo "==> Pulling $BRANCH..."
+  git pull origin "$BRANCH"
 
-# Auto-detect dependency changes.
-if [ "$LOCK_BEFORE" != "$LOCK_AFTER" ]; then
-  echo "==> pnpm-lock.yaml changed — installing dependencies..."
-  FULL=true
+  SCRIPT_AFTER=$(md5sum "$0" 2>/dev/null | cut -d' ' -f1 || echo "none")
+  # Bash buffers the script before executing, so any lines added by git pull
+  # (e.g. a new docker build step) are not seen by the running instance.
+  # Re-exec with the updated script to pick up those changes.
+  if [ "$SCRIPT_BEFORE" != "$SCRIPT_AFTER" ]; then
+    echo "==> Script updated by git pull — re-running with new version..."
+    export _OPENCLAW_UPDATE_RERAN=1
+    exec bash "$0" "$@"
+  fi
+
+  LOCK_AFTER=$(md5sum pnpm-lock.yaml 2>/dev/null | cut -d' ' -f1 || echo "none")
+  # Auto-detect dependency changes.
+  if [ "$LOCK_BEFORE" != "$LOCK_AFTER" ]; then
+    echo "==> pnpm-lock.yaml changed — installing dependencies..."
+    FULL=true
+  fi
+else
+  echo "==> (Re-ran after script self-update)"
 fi
 
 if $FULL; then

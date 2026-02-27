@@ -4,11 +4,11 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { execDocker, dockerContainerState } from "../agents/sandbox/docker.js";
-import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   VOICE_BRIDGE_DEFAULT_PORT,
   VOICE_SIDECAR_CONTAINER_NAME,
 } from "../discord/voice/voice-bridge-types.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 
 const logger = createSubsystemLogger("security/gateway-container");
 
@@ -286,7 +286,9 @@ async function startVoiceSidecarContainer(opts: {
  * Stop the voice sidecar container.
  */
 async function stopVoiceSidecarContainer(): Promise<void> {
-  if (!voiceSidecarStarted) return;
+  if (!voiceSidecarStarted) {
+    return;
+  }
   try {
     await execDocker(["rm", "-f", VOICE_SIDECAR_CONTAINER_NAME], { allowFailure: true });
     logger.info(`Removed voice sidecar: ${VOICE_SIDECAR_CONTAINER_NAME}`);
@@ -336,7 +338,9 @@ function resolveComposeDir(): string | undefined {
         return dir;
       }
       const parent = path.dirname(dir);
-      if (parent === dir) break;
+      if (parent === dir) {
+        break;
+      }
       dir = parent;
     }
   } catch {
@@ -360,10 +364,7 @@ function resolveComposeDir(): string | undefined {
  *
  * Sidecars are persistent and NOT torn down with the gateway.
  */
-async function ensureSidecarContainers(
-  services: string[],
-  composeDir?: string,
-): Promise<void> {
+async function ensureSidecarContainers(services: string[], composeDir?: string): Promise<void> {
   const cwd = composeDir ?? resolveComposeDir();
   if (!cwd) {
     logger.warn("Sidecar skip: docker-compose.yml not found (set OPENCLAW_COMPOSE_DIR if needed)");
@@ -603,8 +604,14 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
 
   // Start the voice sidecar (bridge + internal) if voice is configured.
   // This runs AFTER the gateway container so it can reach it on the internal network.
+  // Non-fatal: if the image is missing or startup fails, log a warning and continue.
+  // The gateway and text channels still work; only Discord voice is unavailable.
   if (opts.voiceSidecar) {
-    await startVoiceSidecarContainer(opts.voiceSidecar);
+    try {
+      await startVoiceSidecarContainer(opts.voiceSidecar);
+    } catch (err) {
+      logger.warn(`Voice sidecar failed to start (Discord voice unavailable): ${String(err)}`);
+    }
   }
 
   // Get the container's IP on the internal network and start a host-side socat forwarder.

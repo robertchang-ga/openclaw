@@ -16,9 +16,10 @@ export function resolveDiscordRestFetch(
   }
   // In secure mode, sanitize-secrets.ts sets the proxy to ws-relay+http://...
   // The relay container is a WebSocket relay, NOT an HTTP CONNECT proxy.
-  // REST requests must use the default fetch (container has bridge network
-  // access) — ProxyAgent would hang because the relay doesn't support CONNECT.
-  // The ws-relay endpoint is only for the Discord gateway WebSocket.
+  // REST requests must use globalThis.fetch (= secureFetch inside the container,
+  // which routes through the relay proxy) — ProxyAgent would hang because the
+  // relay doesn't support CONNECT. The ws-relay endpoint is only for the
+  // Discord gateway WebSocket.
   if (proxy.startsWith(WS_RELAY_PREFIX)) {
     runtime.log?.("discord: rest proxy skipped (ws-relay mode, using direct fetch)");
     return fetch;

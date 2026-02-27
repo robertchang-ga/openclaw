@@ -34,7 +34,9 @@ RUN pnpm rebuild @discordjs/opus 2>&1 || echo "opus native build skipped"
 COPY --chown=node:node tsconfig.json ./
 COPY --chown=node:node src ./src
 
-RUN pnpm build
+# Only compile TypeScript — skip canvas bundle, hook scripts, and other
+# main-gateway-only build steps that don't apply to the voice sidecar.
+RUN pnpm exec tsdown
 
 ENV NODE_ENV=production
 USER node
