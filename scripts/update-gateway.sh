@@ -34,8 +34,9 @@ fi
 echo "==> Building TypeScript..."
 pnpm build
 
-echo "==> Building Docker image (cached)..."
+echo "==> Building Docker images (cached)..."
 docker build -t openclaw-gateway .
+docker build -f Dockerfile.voice-sidecar -t openclaw-voice-sidecar:latest .
 
 if $FULL; then
   echo "==> Installing CLI globally..."

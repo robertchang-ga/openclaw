@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -30,6 +30,7 @@ import { parseTtsDirectives } from "../../tts/tts-core.js";
 import { kokoroTTSBuffer, resolveKokoroConfig, warmUpKokoro } from "../../tts/tts-kokoro.js";
 import { resolveTtsConfig, textToSpeech, type ResolvedTtsConfig } from "../../tts/tts.js";
 import { RealtimeSTT, resample48kStereoTo24kMono } from "./realtime-stt.js";
+import { VoiceBridgeClient } from "./voice-bridge-client.js";
 
 const require = createRequire(import.meta.url);
 
@@ -206,6 +207,8 @@ export class DiscordVoiceManager {
   private botUserId?: string;
   private readonly voiceEnabled: boolean;
   private autoJoinTask: Promise<void> | null = null;
+  /** Bridge client for secure mode — delegates voice I/O to the sidecar */
+  private bridgeClient: VoiceBridgeClient | null = null;
 
   constructor(
     private params: {
@@ -219,6 +222,59 @@ export class DiscordVoiceManager {
   ) {
     this.botUserId = params.botUserId;
     this.voiceEnabled = params.discordConfig.voice?.enabled !== false;
+
+    // In secure mode, use the voice bridge client to delegate voice I/O
+    // to the sidecar container (which has bridge network access).
+    const sidecarUrl = process.env.VOICE_SIDECAR_URL;
+    if (sidecarUrl) {
+      logger.info(`Secure mode: voice bridge client → ${sidecarUrl}`);
+      this.bridgeClient = new VoiceBridgeClient({
+        baseUrl: sidecarUrl,
+        onTranscript: (event) => {
+          // Find or create a virtual session entry for agent processing
+          const route = resolveAgentRoute({
+            cfg: params.cfg,
+            channel: "discord",
+            accountId: params.accountId,
+            guildId: event.guildId,
+            peer: { kind: "channel", id: event.channelId },
+          });
+          const virtualEntry: VoiceSessionEntry = {
+            guildId: event.guildId,
+            channelId: event.channelId,
+            sessionChannelId: event.channelId,
+            route,
+            connection: null as never, // Not used in bridge mode
+            player: null as never, // Not used in bridge mode
+            playbackQueue: Promise.resolve(),
+            processingQueue: Promise.resolve(),
+            activeSpeakers: new Set(),
+            realtimeSTT: null,
+            decryptFailureCount: 0,
+            lastDecryptFailureAt: 0,
+            decryptRecoveryInFlight: false,
+            stop: () => {},
+          };
+          this.enqueueProcessing(virtualEntry, async () => {
+            await this.processTranscript({
+              entry: virtualEntry,
+              transcript: event.text,
+              userId: event.userId,
+            });
+          });
+        },
+        onSpeechStart: (_event) => {
+          // The sidecar handles playback interruption directly
+        },
+        onSessionDisconnected: (event) => {
+          logger.info(
+            `Voice session disconnected (bridge): guild ${event.guildId} reason ${event.reason ?? "unknown"}`,
+          );
+          this.sessions.delete(event.guildId);
+        },
+      });
+      this.bridgeClient.connect();
+    }
   }
 
   setBotUserId(id?: string) {
@@ -288,6 +344,41 @@ export class DiscordVoiceManager {
       return { ok: false, message: "Missing guildId or channelId." };
     }
     logVoiceVerbose(`join requested: guild ${guildId} channel ${channelId}`);
+
+    // In secure mode, delegate to the voice sidecar
+    if (this.bridgeClient) {
+      const result = await this.bridgeClient.join({ guildId, channelId });
+      if (result.ok) {
+        // Track a lightweight session entry for the bridge
+        const sessionChannelId = channelId;
+        const route = resolveAgentRoute({
+          cfg: this.params.cfg,
+          channel: "discord",
+          accountId: this.params.accountId,
+          guildId,
+          peer: { kind: "channel", id: sessionChannelId },
+        });
+        this.sessions.set(guildId, {
+          guildId,
+          channelId,
+          sessionChannelId,
+          route,
+          connection: null as never,
+          player: null as never,
+          playbackQueue: Promise.resolve(),
+          processingQueue: Promise.resolve(),
+          activeSpeakers: new Set(),
+          realtimeSTT: null,
+          decryptFailureCount: 0,
+          lastDecryptFailureAt: 0,
+          decryptRecoveryInFlight: false,
+          stop: () => {
+            this.bridgeClient?.leave({ guildId }).catch(() => {});
+          },
+        });
+      }
+      return result;
+    }
 
     const existing = this.sessions.get(guildId);
     if (existing && existing.channelId === channelId) {
@@ -555,6 +646,14 @@ export class DiscordVoiceManager {
   async leave(params: { guildId: string; channelId?: string }): Promise<VoiceOperationResult> {
     const guildId = params.guildId.trim();
     logVoiceVerbose(`leave requested: guild ${guildId} channel ${params.channelId ?? "current"}`);
+
+    // In secure mode, delegate to the voice sidecar
+    if (this.bridgeClient) {
+      const result = await this.bridgeClient.leave({ guildId, channelId: params.channelId });
+      this.sessions.delete(guildId);
+      return result;
+    }
+
     const entry = this.sessions.get(guildId);
     if (!entry) {
       return { ok: false, message: "Not connected to a voice channel." };
@@ -574,6 +673,11 @@ export class DiscordVoiceManager {
   }
 
   async destroy(): Promise<void> {
+    // Destroy bridge client in secure mode
+    if (this.bridgeClient) {
+      this.bridgeClient.destroy();
+      this.bridgeClient = null;
+    }
     for (const entry of this.sessions.values()) {
       entry.stop();
     }
@@ -684,33 +788,46 @@ export class DiscordVoiceManager {
         // Start TTS generation immediately (parallel with prior playback).
         const audioPromise = kokoroTTSBuffer(sentence, kokoroConfig);
 
-        // Enqueue playback: awaits the pre-generated audio, which may
-        // already be ready by the time the previous sentence finishes.
-        this.enqueuePlayback(entry, async () => {
-          const wavBuf = await audioPromise;
-          const tempRoot = resolvePreferredOpenClawTmpDir();
-          mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
-          const tempDir = mkdtempSync(path.join(tempRoot, "tts-stream-"));
-          const audioPath = path.join(tempDir, `s${sentenceNum}.wav`);
-          writeFileSync(audioPath, wavBuf);
-          logger.info(
-            `kokoro playback #${sentenceNum}: guild ${entry.guildId} file ${path.basename(audioPath)} (${wavBuf.length} bytes)`,
-          );
-          const resource = createAudioResource(audioPath);
-          entry.player.play(resource);
-          await entersState(
-            entry.player,
-            AudioPlayerStatus.Playing,
-            PLAYBACK_READY_TIMEOUT_MS,
-          ).catch(() => undefined);
-          await entersState(
-            entry.player,
-            AudioPlayerStatus.Idle,
-            SPEAKING_READY_TIMEOUT_MS,
-          ).catch(() => undefined);
-          // Clean up temp file.
-          fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
-        });
+        if (this.bridgeClient) {
+          // Bridge mode: send WAV to sidecar for playback
+          const bridge = this.bridgeClient;
+          const guildId = entry.guildId;
+          audioPromise
+            .then((wavBuf) => {
+              logger.info(
+                `kokoro bridge #${sentenceNum}: guild ${guildId} (${wavBuf.length} bytes)`,
+              );
+              return bridge.play(guildId, wavBuf, sentenceNum);
+            })
+            .catch((err) => logger.warn(`kokoro bridge playback failed: ${formatErrorMessage(err)}`));
+        } else {
+          // Direct mode: play locally via AudioPlayer
+          this.enqueuePlayback(entry, async () => {
+            const wavBuf = await audioPromise;
+            const tempRoot = resolvePreferredOpenClawTmpDir();
+            mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+            const tempDir = mkdtempSync(path.join(tempRoot, "tts-stream-"));
+            const audioPath = path.join(tempDir, `s${sentenceNum}.wav`);
+            writeFileSync(audioPath, wavBuf);
+            logger.info(
+              `kokoro playback #${sentenceNum}: guild ${entry.guildId} file ${path.basename(audioPath)} (${wavBuf.length} bytes)`,
+            );
+            const resource = createAudioResource(audioPath);
+            entry.player.play(resource);
+            await entersState(
+              entry.player,
+              AudioPlayerStatus.Playing,
+              PLAYBACK_READY_TIMEOUT_MS,
+            ).catch(() => undefined);
+            await entersState(
+              entry.player,
+              AudioPlayerStatus.Idle,
+              SPEAKING_READY_TIMEOUT_MS,
+            ).catch(() => undefined);
+            // Clean up temp file.
+            fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+          });
+        }
       };
 
       const splitAndSpeak = (flush: boolean) => {
@@ -858,20 +975,29 @@ export class DiscordVoiceManager {
         `tts ok (${speakText.length} chars): guild ${entry.guildId} channel ${entry.channelId} file ${path.basename(audioPath)}`,
       );
 
-      this.enqueuePlayback(entry, async () => {
+      if (this.bridgeClient) {
+        // Bridge mode: read the audio file and send to sidecar
+        const audioData = readFileSync(audioPath);
         logger.info(
-          `playback start: guild ${entry.guildId} channel ${entry.channelId} file ${path.basename(audioPath)}`,
+          `tts bridge: guild ${entry.guildId} (${audioData.length} bytes)`,
         );
-        const resource = createAudioResource(audioPath);
-        entry.player.play(resource);
-        await entersState(entry.player, AudioPlayerStatus.Playing, PLAYBACK_READY_TIMEOUT_MS).catch(
-          () => undefined,
-        );
-        await entersState(entry.player, AudioPlayerStatus.Idle, SPEAKING_READY_TIMEOUT_MS).catch(
-          () => undefined,
-        );
-        logger.info(`playback done: guild ${entry.guildId} channel ${entry.channelId}`);
-      });
+        await this.bridgeClient.play(entry.guildId, audioData);
+      } else {
+        this.enqueuePlayback(entry, async () => {
+          logger.info(
+            `playback start: guild ${entry.guildId} channel ${entry.channelId} file ${path.basename(audioPath)}`,
+          );
+          const resource = createAudioResource(audioPath);
+          entry.player.play(resource);
+          await entersState(entry.player, AudioPlayerStatus.Playing, PLAYBACK_READY_TIMEOUT_MS).catch(
+            () => undefined,
+          );
+          await entersState(entry.player, AudioPlayerStatus.Idle, SPEAKING_READY_TIMEOUT_MS).catch(
+            () => undefined,
+          );
+          logger.info(`playback done: guild ${entry.guildId} channel ${entry.channelId}`);
+        });
+      }
     }
   }
 }

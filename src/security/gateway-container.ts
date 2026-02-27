@@ -5,6 +5,10 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { execDocker, dockerContainerState } from "../agents/sandbox/docker.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import {
+  VOICE_BRIDGE_DEFAULT_PORT,
+  VOICE_SIDECAR_CONTAINER_NAME,
+} from "../discord/voice/voice-bridge-types.js";
 
 const logger = createSubsystemLogger("security/gateway-container");
 
@@ -44,6 +48,17 @@ export type GatewayContainerOptions = {
   sidecars?: string[];
   /** Working directory containing docker-compose.yml (defaults to cwd). */
   composeDir?: string;
+  /** Voice sidecar config: when provided, starts the voice sidecar container. */
+  voiceSidecar?: {
+    /** Discord bot token for voice gateway connection */
+    discordToken: string;
+    /** DAVE encryption toggle */
+    daveEncryption?: boolean;
+    /** Whisper model name */
+    whisperModel?: string;
+    /** Language hint for STT */
+    language?: string;
+  };
 };
 
 const SECURE_NETWORK_NAME = "openclaw-secure-net";
@@ -196,6 +211,91 @@ async function startServiceRelayContainer(relay: ServiceRelay): Promise<string> 
 /** Track service relay container names for cleanup. */
 const activeServiceRelays: string[] = [];
 
+/** Track if a voice sidecar was started */
+let voiceSidecarStarted = false;
+
+const VOICE_SIDECAR_IMAGE = "openclaw-voice-sidecar:latest";
+
+/**
+ * Start the voice sidecar container.
+ *
+ * The sidecar runs on BOTH the bridge network (for Discord voice WSS/UDP)
+ * and the internal network (for gateway communication).
+ * It contains no conversation context or secrets — only the Discord bot token
+ * needed for voice gateway authentication.
+ */
+async function startVoiceSidecarContainer(opts: {
+  discordToken: string;
+  daveEncryption?: boolean;
+  whisperModel?: string;
+  language?: string;
+}): Promise<void> {
+  // Remove any existing sidecar
+  try {
+    await execDocker(["rm", "-f", VOICE_SIDECAR_CONTAINER_NAME], { allowFailure: true });
+  } catch {
+    // ignore
+  }
+
+  const args = [
+    "run",
+    "-d",
+    "--name",
+    VOICE_SIDECAR_CONTAINER_NAME,
+    // Start on the internal network for gateway communication
+    "--network",
+    SECURE_NETWORK_NAME,
+    "--restart",
+    "unless-stopped",
+    // Discord bot token for voice gateway
+    "-e",
+    `DISCORD_BOT_TOKEN=${opts.discordToken}`,
+    // Speaches STT URL (accessible via Docker DNS on openclaw-secure-net)
+    "-e",
+    "SPEACHES_URL=ws://speaches:8000/v1/realtime",
+    "-e",
+    `VOICE_BRIDGE_PORT=${VOICE_BRIDGE_DEFAULT_PORT}`,
+  ];
+
+  if (opts.whisperModel) {
+    args.push("-e", `WHISPER_MODEL=${opts.whisperModel}`);
+  }
+  if (opts.language) {
+    args.push("-e", `VOICE_LANGUAGE=${opts.language}`);
+  }
+  if (opts.daveEncryption === false) {
+    args.push("-e", "DAVE_ENCRYPTION=false");
+  }
+
+  args.push(VOICE_SIDECAR_IMAGE);
+
+  await execDocker(args);
+
+  // Connect the sidecar to the bridge network for Discord voice.
+  // The sidecar has no conversation context or secrets — only the Discord
+  // bot token needed for voice gateway authentication.
+  await execDocker(["network", "connect", "bridge", VOICE_SIDECAR_CONTAINER_NAME]);
+
+  voiceSidecarStarted = true;
+  logger.info(
+    `Voice sidecar started: ${VOICE_SIDECAR_CONTAINER_NAME} (bridge + ${SECURE_NETWORK_NAME})`,
+  );
+}
+
+/**
+ * Stop the voice sidecar container.
+ */
+async function stopVoiceSidecarContainer(): Promise<void> {
+  if (!voiceSidecarStarted) return;
+  try {
+    await execDocker(["rm", "-f", VOICE_SIDECAR_CONTAINER_NAME], { allowFailure: true });
+    logger.info(`Removed voice sidecar: ${VOICE_SIDECAR_CONTAINER_NAME}`);
+  } catch {
+    // ignore
+  }
+  voiceSidecarStarted = false;
+}
+
 /**
  * Stop all service relay containers.
  */
@@ -302,6 +402,7 @@ export async function stopGatewayContainer(): Promise<void> {
     logger.info(`Stopping existing gateway container: ${GATEWAY_CONTAINER_NAME}`);
     await execDocker(["rm", "-f", GATEWAY_CONTAINER_NAME]);
   }
+  await stopVoiceSidecarContainer();
   await stopServiceRelayContainers();
   await stopRelayContainer();
   await removeSecureNetwork();
@@ -420,6 +521,9 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
     // Sidecar service URLs (Docker-internal hostnames on openclaw-secure-net)
     "-e",
     "COGNEE_BASE_URL=http://cognee:8000",
+    // Voice sidecar URL for Discord voice connections (runs on bridge + internal)
+    "-e",
+    `VOICE_SIDECAR_URL=http://${VOICE_SIDECAR_CONTAINER_NAME}:${VOICE_BRIDGE_DEFAULT_PORT}`,
     "-e",
     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     "-e",
@@ -491,13 +595,17 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
   );
   await execDocker(args);
 
-  // Also connect the container to the default bridge network for outbound internet access.
-  // This is required for Discord voice connections (WebSocket signaling + UDP audio to
-  // dynamic *.discord.media servers) which cannot be proxied through the relay.
-  // The container holds no secrets (only placeholders injected by the secrets proxy),
-  // so outbound access does not weaken the security model.
-  await execDocker(["network", "connect", "bridge", GATEWAY_CONTAINER_NAME]);
-  logger.info(`Connected ${GATEWAY_CONTAINER_NAME} to bridge network for outbound access`);
+  // NOTE: The gateway container is NOT connected to the bridge network.
+  // Discord voice connections (WSS + UDP) are handled by the voice sidecar
+  // container, which has bridge access but no conversation context or secrets.
+  // This prevents data exfiltration via exec/curl from the gateway container.
+  logger.info(`${GATEWAY_CONTAINER_NAME} running on internal-only network (no bridge)`);
+
+  // Start the voice sidecar (bridge + internal) if voice is configured.
+  // This runs AFTER the gateway container so it can reach it on the internal network.
+  if (opts.voiceSidecar) {
+    await startVoiceSidecarContainer(opts.voiceSidecar);
+  }
 
   // Get the container's IP on the internal network and start a host-side socat forwarder.
   // This makes the gateway port accessible on the host (127.0.0.1:gatewayPort) without

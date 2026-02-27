@@ -13,6 +13,7 @@ import {
   readConfigFileSnapshot,
   resolveStateDir,
   resolveGatewayPort,
+  type OpenClawConfig,
 } from "../../config/config.js";
 import {
   prepareSanitizedMounts,
@@ -34,7 +35,9 @@ import {
   stopGatewayContainer,
   isGatewayContainerRunning,
   getGatewayContainerLogs,
+  type GatewayContainerOptions,
 } from "../../security/gateway-container.js";
+import { resolveDiscordToken } from "../../discord/token.js";
 import { loadProxyPort } from "../../security/secrets-proxy-allowlist.js";
 import { startSecretsProxy, generateProxyAuthToken } from "../../security/secrets-proxy.js";
 import { createSecretsRegistry } from "../../security/secrets-registry.js";
@@ -95,6 +98,26 @@ function resolveSidecars(cfg: ReturnType<typeof loadConfig>): string[] {
 
   gatewayLog.info(`Resolved sidecars: [${sidecars.join(", ")}]`);
   return sidecars;
+}
+
+function resolveVoiceSidecarConfig(
+  cfg: ReturnType<typeof loadConfig>,
+): GatewayContainerOptions["voiceSidecar"] {
+  const voice = cfg.channels?.discord?.voice as Record<string, unknown> | undefined;
+  if (!voice?.enabled) return undefined;
+
+  const { token } = resolveDiscordToken(cfg);
+  if (!token) {
+    gatewayLog.warn("Voice enabled but no Discord token found — skipping voice sidecar");
+    return undefined;
+  }
+
+  return {
+    discordToken: token,
+    daveEncryption: voice.daveEncryption as boolean | undefined,
+    whisperModel: (voice.whisperModel ?? voice.model) as string | undefined,
+    language: voice.language as string | undefined,
+  };
 }
 
 const gatewayLog = createSubsystemLogger("gateway");
@@ -470,6 +493,7 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
           env: containerEnv,
           binds: sanitizedMounts.binds,
           sidecars: resolveSidecars(cfg),
+          voiceSidecar: resolveVoiceSidecarConfig(cfg),
         });
         gatewayLog.info(`Gateway container started: ${containerName}`);
       } catch (err) {
