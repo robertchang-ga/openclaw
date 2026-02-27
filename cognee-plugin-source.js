@@ -374,6 +374,7 @@ async function syncFiles(client, files, syncIndex, cfg, logger) {
                     syncIndex.entries[file.path] = { hash: file.hash, dataId: existing.dataId };
                     syncIndex.datasetId = datasetId;
                     syncIndex.datasetName = cfg.datasetName;
+                    syncIndex.needsCognify = true;
                     result.updated++;
                     logger.info?.(`memory-cognee: updated ${file.path}`);
                     continue; // Success, move to next file
@@ -410,6 +411,7 @@ async function syncFiles(client, files, syncIndex, cfg, logger) {
             };
             syncIndex.datasetId = datasetId;
             syncIndex.datasetName = cfg.datasetName;
+            syncIndex.needsCognify = true;
             needsCognify = true;
             result.added++;
             logger.info?.(`memory-cognee: added ${file.path}`);
@@ -419,10 +421,11 @@ async function syncFiles(client, files, syncIndex, cfg, logger) {
             logger.warn?.(`memory-cognee: failed to sync ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
-    // Cognify only after adds (not after updates — those are already processed)
+    // Cognify after adds (new data needs graph building)
     if (needsCognify && cfg.autoCognify && datasetId) {
         try {
             await client.cognify({ datasetIds: [datasetId] });
+            syncIndex.needsCognify = false;
             logger.info?.("memory-cognee: cognify completed");
         }
         catch (error) {
@@ -611,6 +614,58 @@ const memoryCogneePlugin = {
                     api.logger.warn?.(`memory-cognee: delete failed: ${String(error)}`);
                     return {
                         content: [{ type: "text", text: `Delete failed: ${String(error)}` }],
+                        details: { error: String(error) },
+                    };
+                }
+            },
+        });
+        // ------------------------------------------------------------------
+        // Tool: cognee_cognify — manually trigger knowledge graph rebuild
+        // ------------------------------------------------------------------
+        api.registerTool({
+            name: "cognee_cognify",
+            description: "Trigger Cognee to rebuild the knowledge graph from ingested data. Run this after memory files have been updated to make changes searchable. Cognify extracts entities, relationships, and temporal links from raw data. Skips processing if no data has changed since the last cognify.",
+            parameters: {
+                type: "object",
+                properties: {
+                    datasetId: {
+                        type: "string",
+                        description: "Optional dataset ID to cognify. If omitted, uses the current active dataset. Use cognee_datasets to find available dataset IDs.",
+                    },
+                    force: {
+                        type: "boolean",
+                        description: "Force cognify even if no changes have been detected since the last run (default: false).",
+                    },
+                },
+            },
+            async execute(_id, params) {
+                await stateReady;
+                const dsId = typeof params.datasetId === "string" ? params.datasetId.trim() : datasetId;
+                if (!dsId) {
+                    return {
+                        content: [{ type: "text", text: "No dataset available. Add data first or specify a datasetId." }],
+                        details: { error: "no dataset" },
+                    };
+                }
+                const force = params.force === true;
+                if (!force && syncIndex.needsCognify === false) {
+                    return {
+                        content: [{ type: "text", text: "Knowledge graph is up to date — no changes since last cognify. Use force: true to rebuild anyway." }],
+                        details: { skipped: true },
+                    };
+                }
+                try {
+                    const result = await client.cognify({ datasetIds: [dsId] });
+                    syncIndex.needsCognify = false;
+                    await saveSyncIndex(syncIndex);
+                    return {
+                        content: [{ type: "text", text: `Cognify completed successfully for dataset ${dsId}.\n${JSON.stringify(result, null, 2)}` }],
+                        details: result,
+                    };
+                } catch (error) {
+                    api.logger.warn?.(`memory-cognee: cognify failed: ${String(error)}`);
+                    return {
+                        content: [{ type: "text", text: `Cognify failed: ${String(error)}` }],
                         details: { error: String(error) },
                     };
                 }
