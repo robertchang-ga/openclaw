@@ -68,4 +68,12 @@ export default defineConfig([
     fixedExtension: false,
     platform: "node",
   },
+  {
+    entry: "src/discord/voice/voice-sidecar-entry.ts",
+    outDir: "dist/discord/voice",
+    env,
+    external,
+    fixedExtension: false,
+    platform: "node",
+  },
 ]);
