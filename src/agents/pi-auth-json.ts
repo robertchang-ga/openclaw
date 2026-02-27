@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { ensureAuthProfileStore } from "./auth-profiles.js";
 import type { AuthProfileCredential } from "./auth-profiles/types.js";
@@ -117,15 +116,7 @@ export async function ensurePiAuthJsonFromAuthProfiles(agentDir: string): Promis
   authPath: string;
 }> {
   const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
-
-  // In secure (container) mode, the agent directory is root-owned (created by Docker
-  // for bind mounts) and not writable by the node user. Write to a temp file instead
-  // so the pi SDK's AuthStorage can still read credentials for model discovery and
-  // compaction. The real API keys are injected by the secrets proxy on outbound calls.
-  const isSecureMode = process.env.OPENCLAW_SECURE_MODE === "1";
-  const authPath = isSecureMode
-    ? path.join(os.tmpdir(), "openclaw-pi-auth.json")
-    : path.join(agentDir, "auth.json");
+  const authPath = path.join(agentDir, "auth.json");
 
   // Group profiles by provider, taking the first valid profile for each
   const providerCredentials = new Map<string, AuthJsonCredential>();
@@ -160,7 +151,7 @@ export async function ensurePiAuthJsonFromAuthProfiles(agentDir: string): Promis
     return { wrote: false, authPath };
   }
 
-  await fs.mkdir(path.dirname(authPath), { recursive: true, mode: 0o700 });
+  await fs.mkdir(agentDir, { recursive: true, mode: 0o700 });
   await fs.writeFile(authPath, `${JSON.stringify(existing, null, 2)}\n`, { mode: 0o600 });
 
   return { wrote: true, authPath };

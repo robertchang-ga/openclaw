@@ -186,7 +186,7 @@ export async function loadModelCatalog(params?: {
     try {
       const cfg = params?.config ?? loadConfig();
       await ensureOpenClawModelsJson(cfg);
-      const { authPath } = await (
+      await (
         await import("./pi-auth-json.js")
       ).ensurePiAuthJsonFromAuthProfiles(resolveOpenClawAgentDir());
       // IMPORTANT: keep the dynamic import *inside* the try/catch.
@@ -196,7 +196,7 @@ export async function loadModelCatalog(params?: {
       const piSdk = await importPiSdk();
       const agentDir = resolveOpenClawAgentDir();
       const { join } = await import("node:path");
-      const authStorage = createAuthStorage(piSdk.AuthStorage, authPath);
+      const authStorage = createAuthStorage(piSdk.AuthStorage, join(agentDir, "auth.json"));
       const registry = new (piSdk.ModelRegistry as unknown as {
         new (
           authStorage: unknown,

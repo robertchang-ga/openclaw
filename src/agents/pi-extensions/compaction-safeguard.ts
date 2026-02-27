@@ -219,11 +219,24 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
 
     const apiKey = await ctx.modelRegistry.getApiKey(model);
     if (!apiKey) {
-      console.warn(
-        "Compaction safeguard: no API key available; cancelling compaction to preserve history.",
-      );
-      return { cancel: true };
+      // In secure (container) mode, the secrets proxy injects real API keys into
+      // outbound fetch() calls. The auth.json that ModelRegistry reads may not exist
+      // (agent directory is root-owned from Docker bind mounts), but compaction will
+      // still work because the proxy handles authentication.
+      // TODO: eliminate auth.json dependency entirely — ModelRegistry should read
+      // from auth-profiles.json natively instead of requiring the legacy bridge.
+      if (process.env.OPENCLAW_SECURE_MODE === "1") {
+        log.info("Compaction: no API key from ModelRegistry, but secure mode proxy will inject credentials.");
+      } else {
+        console.warn(
+          "Compaction safeguard: no API key available; cancelling compaction to preserve history.",
+        );
+        return { cancel: true };
+      }
     }
+    // In secure mode apiKey may be undefined; the secrets proxy injects the real key,
+    // so we pass a placeholder that satisfies the type requirement.
+    const resolvedApiKey = apiKey ?? "proxy-injected";
 
     try {
       const modelContextWindow = resolveContextWindowTokens(model);
@@ -279,7 +292,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                 droppedSummary = await summarizeInStages({
                   messages: pruned.droppedMessagesList,
                   model,
-                  apiKey,
+                  apiKey: resolvedApiKey,
                   signal,
                   reserveTokens: Math.max(1, Math.floor(preparation.settings.reserveTokens)),
                   maxChunkTokens: droppedMaxChunkTokens,
@@ -317,7 +330,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       const historySummary = await summarizeInStages({
         messages: messagesToSummarize,
         model,
-        apiKey,
+        apiKey: resolvedApiKey,
         signal,
         reserveTokens,
         maxChunkTokens,
@@ -331,7 +344,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         const prefixSummary = await summarizeInStages({
           messages: turnPrefixMessages,
           model,
-          apiKey,
+          apiKey: resolvedApiKey,
           signal,
           reserveTokens,
           maxChunkTokens,
