@@ -220,12 +220,11 @@ export async function prepareSanitizedMounts(opts?: {
   }
 
   // =========================================================================
-  // 4. CONTROL UI (canvas) - read-only
+  // 4. CONTROL UI (canvas) - read-write
   // =========================================================================
   const canvasDir = path.join(openclawDir, "canvas");
-  if (fs.existsSync(canvasDir)) {
-    binds.push(`${canvasDir}:/home/node/.openclaw/canvas:ro`);
-  }
+  await fs.promises.mkdir(canvasDir, { recursive: true });
+  binds.push(`${canvasDir}:/home/node/.openclaw/canvas:rw`);
 
   // =========================================================================
   // 5. DEVICES DIRECTORY (read-write) - for device pairing
