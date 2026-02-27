@@ -9,6 +9,7 @@ import {
   analyzeArgvCommand,
   evaluateExecAllowlist,
   evaluateShellAllowlist,
+  isHostExecBinAllowed,
   recordAllowlistUse,
   resolveAllowAlwaysPatterns,
   resolveExecApprovals,
@@ -468,34 +469,6 @@ async function evaluateSystemRunPolicyPhase(
   let ask = approvals.agent.ask;
   const autoAllowSkills = approvals.agent.autoAllowSkills;
 
-  // hostExecBins override: if the command binary is in the hostExecBins list,
-  // treat it as explicitly trusted — force security=full and ask=off.
-  // This mirrors the pre-merge behavior removed by the upstream refactor.
-  // Only applies to simple argv commands (no shell wrappers) to prevent bypasses.
-  if (parsed.shellCommand === null && parsed.argv.length > 0 && approvals.hostExecBins.size > 0) {
-    const rawBin = parsed.argv[0] ?? "";
-    const binName = path.basename(rawBin).toLowerCase();
-    const binRule: HostExecBinRule | undefined = binName ? approvals.hostExecBins.get(binName) : undefined;
-    if (binRule !== undefined) {
-      const subcommand = parsed.argv[1]?.toLowerCase() ?? "";
-      const hostExecBinAllowed = (() => {
-        if (binRule.allow !== null) {
-          // allow-list mode: only listed subcommands pass
-          return binRule.allow.size === 0 || binRule.allow.has(subcommand);
-        }
-        if (binRule.deny !== null) {
-          // deny-list mode: blocked subcommands fail
-          return !binRule.deny.has(subcommand);
-        }
-        // no filter: all subcommands allowed
-        return true;
-      })();
-      if (hostExecBinAllowed) {
-        security = "full";
-        ask = "off";
-      }
-    }
-  }
   const { safeBins, safeBinProfiles, trustedSafeBinDirs } = resolveExecSafeBinRuntimePolicy({
     global: cfg.tools?.exec,
     local: agentExec,
@@ -515,6 +488,25 @@ async function evaluateSystemRunPolicyPhase(
     skillBins: bins,
     autoAllowSkills,
   });
+
+  // hostExecBins override: if the command binary is in the hostExecBins list,
+  // treat it as explicitly trusted — force security=full and ask=off.
+  // This mirrors the pre-merge behavior (1e77900): use segments-based detection
+  // so shell-wrapped commands (/bin/sh -lc "mcporter list") also match.
+  // We require segments.length === 1 (no pipes or chaining) to prevent bypasses.
+  let hostExecBinsOverride = false;
+  if (approvals.hostExecBins.size > 0 && analysisOk && segments.length === 1) {
+    const binToken = segments[0]?.resolution?.executableName?.toLowerCase() || "";
+    const binRule = binToken ? approvals.hostExecBins.get(binToken) : undefined;
+    if (binRule) {
+      if (isHostExecBinAllowed(binRule, segments[0]?.argv ?? [])) {
+        hostExecBinsOverride = true;
+        security = "full";
+        ask = "off";
+      }
+    }
+  }
+
   const isWindows = process.platform === "win32";
   const cmdInvocation = parsed.shellCommand
     ? opts.isCmdExeInvocation(segments[0]?.argv ?? [])
@@ -541,7 +533,9 @@ async function evaluateSystemRunPolicyPhase(
   }
 
   // Fail closed if policy/runtime drift re-allows unapproved shell wrappers.
-  if (security === "allowlist" && parsed.shellCommand && !policy.approvedByAsk) {
+  // Skip this check when hostExecBins override is active — those are explicitly
+  // trusted by the user and bypass the normal approval flow.
+  if (security === "allowlist" && parsed.shellCommand && !policy.approvedByAsk && !hostExecBinsOverride) {
     await sendSystemRunDenied(opts, parsed.execution, {
       reason: "approval-required",
       message: "SYSTEM_RUN_DENIED: approval required",
