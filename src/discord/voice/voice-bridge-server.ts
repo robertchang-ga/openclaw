@@ -387,10 +387,9 @@ export class VoiceBridgeServer {
       adapterCreator,
       selfDeaf: false,
       selfMute: false,
-      // Work around @discordjs/voice 0.19.x DAVE E2E bug — same as manager.ts
-      // commit ef25cfbc. Disabling DAVE falls back to XSalsa20 transport
-      // encryption (still encrypted, just not E2E).
-      daveEncryption: false,
+      // Pass DAVE config from gateway. Defaults to enabled (library default).
+      daveEncryption: this.config.daveEncryption,
+      decryptionFailureTolerance: this.config.decryptionFailureTolerance,
     });
 
     try {
@@ -510,7 +509,23 @@ export class VoiceBridgeServer {
 
       stream.on("error", (err) => {
         session.activeSpeakers.delete(userId);
-        log.warn(`receive error for user ${userId}: ${String(err)}`);
+        const msg = String(err);
+        log.warn(`receive error for user ${userId}: ${msg}`);
+        // Feed decrypt failures into the DAVE recovery tracker
+        if (DECRYPT_FAILURE_PATTERN.test(msg)) {
+          const now = Date.now();
+          if (now - session.lastDecryptFailureAt > DECRYPT_FAILURE_WINDOW_MS) {
+            session.decryptFailureCount = 0;
+          }
+          session.lastDecryptFailureAt = now;
+          session.decryptFailureCount += 1;
+          if (
+            session.decryptFailureCount >= DECRYPT_FAILURE_RECONNECT_THRESHOLD &&
+            !session.decryptRecoveryInFlight
+          ) {
+            this.recoverFromDecryptFailures(session);
+          }
+        }
       });
     };
 
