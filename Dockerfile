@@ -61,9 +61,9 @@ RUN pnpm build
 
 # Deploy the Cognee plugin source into the extensions directory so it
 # takes precedence over any previously-installed version.
-RUN mkdir -p /home/node/.openclaw/extensions/cognee-openclaw/dist && \
-    cp /app/cognee-plugin-source.js /home/node/.openclaw/extensions/cognee-openclaw/dist/index.js && \
-    cp /app/plugin-manifest.json /home/node/.openclaw/extensions/cognee-openclaw/dist/plugin-manifest.json
+RUN mkdir -p /home/node/.openclaw/extensions/memory-cognee/dist && \
+    cp /app/cognee-plugin-source.js /home/node/.openclaw/extensions/memory-cognee/dist/index.js && \
+    cp /app/plugin-manifest.json /home/node/.openclaw/extensions/memory-cognee/dist/plugin-manifest.json
 # Force pnpm for UI build (Bun may fail on ARM/Synology architectures)
 ENV OPENCLAW_PREFER_PNPM=1
 RUN pnpm ui:build
