@@ -46,7 +46,7 @@ services:
     entrypoint: ["node", "dist/index.js"]
 
   cognee:
-    image: cognee/cognee:latest
+    build: ./cognee
     container_name: cognee
     ports:
       - "127.0.0.1:${COGNEE_PORT:-8000}:8000"
@@ -59,11 +59,19 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
       - ENABLE_BACKEND_ACCESS_CONTROL=false
       - REQUIRE_AUTHENTICATION=false
+      # Shared Neo4j for both Cognee knowledge graph and Graphiti temporal graph
+      - GRAPH_DATABASE_PROVIDER=neo4j
+      - GRAPH_DATABASE_URL=bolt://neo4j:7687
+      - GRAPH_DATABASE_USERNAME=${NEO4J_USER:-neo4j}
+      - GRAPH_DATABASE_PASSWORD=${NEO4J_PASSWORD:-changeme}
     volumes:
       - cognee_data:/app/cognee/.cognee_system
     networks:
       - default
       - openclaw-secure-net
+    depends_on:
+      neo4j:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -102,10 +110,32 @@ services:
       retries: 3
       start_period: 60s
 
+  neo4j:
+    image: neo4j:5.26.0
+    container_name: neo4j
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    environment:
+      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme}
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - default
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
 volumes:
   cognee_data:
     driver: local
   speaches_models:
+    driver: local
+  neo4j_data:
     driver: local
 
 networks:

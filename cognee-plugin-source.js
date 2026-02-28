@@ -7,7 +7,7 @@ import { dirname, join, relative, resolve } from "node:path";
 // ---------------------------------------------------------------------------
 const DEFAULT_BASE_URL = process.env.COGNEE_BASE_URL || "http://localhost:8000";
 const DEFAULT_DATASET_NAME = "openclaw";
-const DEFAULT_SEARCH_TYPE = "TEMPORAL";
+const DEFAULT_SEARCH_TYPE = "GRAPH_COMPLETION";
 const DEFAULT_MAX_RESULTS = 6;
 const DEFAULT_MIN_SCORE = 0;
 const DEFAULT_MAX_TOKENS = 512;
@@ -251,7 +251,22 @@ class CogneeClient {
                 "Content-Type": "application/json",
                 ...this.buildHeaders(),
             },
-            body: JSON.stringify({ datasetIds: params.datasetIds, temporal_cognify: true }),
+            body: JSON.stringify({ datasetIds: params.datasetIds }),
+        });
+    }
+    /**
+     * Run Graphiti's temporal awareness pipeline on the specified datasets.
+     * This builds a bi-temporal knowledge graph in Neo4j and bridges the
+     * resulting nodes into Cognee's vector store for unified search.
+     */
+    async graphitiCognify(params = {}) {
+        return this.fetchJson("/api/v1/graphiti/cognify", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                ...this.buildHeaders(),
+            },
+            body: JSON.stringify({ dataset_ids: params.datasetIds }),
         });
     }
     async search(params) {
@@ -427,6 +442,22 @@ async function syncFiles(client, files, syncIndex, cfg, logger) {
             await client.cognify({ datasetIds: [datasetId] });
             syncIndex.needsCognify = false;
             logger.info?.("memory-cognee: cognify completed");
+            // Run Graphiti temporal awareness pipeline after standard cognify.
+            // This builds bi-temporal episodic nodes in Neo4j and bridges them
+            // into Cognee's vector store for unified graph traversal.
+            try {
+                const graphitiResult = await client.graphitiCognify({ datasetIds: [datasetId] });
+                if (graphitiResult?.success) {
+                    logger.info?.(`memory-cognee: graphiti cognify completed (${graphitiResult.episodes_added} episodes)`);
+                }
+                else {
+                    logger.warn?.(`memory-cognee: graphiti cognify returned: ${graphitiResult?.message || "unknown"}`);
+                }
+            }
+            catch (graphitiError) {
+                // Non-fatal: Graphiti is an enhancement, not a requirement
+                logger.warn?.(`memory-cognee: graphiti cognify failed (non-fatal): ${graphitiError instanceof Error ? graphitiError.message : String(graphitiError)}`);
+            }
         }
         catch (error) {
             logger.warn?.(`memory-cognee: cognify failed: ${error instanceof Error ? error.message : String(error)}`);
