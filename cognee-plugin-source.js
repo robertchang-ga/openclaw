@@ -783,14 +783,17 @@ const memoryCogneePlugin = {
                 try {
                     const agentIds = await fs.readdir(agentsDir);
                     for (const agentId of agentIds) {
-                        const sessionsDir = join(agentsDir, agentId, "sessions");
-                        try {
-                            const files = await fs.readdir(sessionsDir);
-                            const jsonlFiles = files
-                                .filter((f) => f.endsWith(".jsonl"))
-                                .map((f) => join(sessionsDir, f));
-                            sessionFiles.push(...jsonlFiles);
-                        } catch { /* agent may not have sessions */ }
+                        // Check both sessions/ (container mount) and sessions-secure/ (host path)
+                        for (const sessionsDirName of ["sessions", "sessions-secure"]) {
+                            const sessionsDir = join(agentsDir, agentId, sessionsDirName);
+                            try {
+                                const files = await fs.readdir(sessionsDir);
+                                const jsonlFiles = files
+                                    .filter((f) => f.endsWith(".jsonl"))
+                                    .map((f) => join(sessionsDir, f));
+                                sessionFiles.push(...jsonlFiles);
+                            } catch { /* directory may not exist */ }
+                        }
                     }
                 } catch {
                     ctx.logger.warn?.("No agents directory found");
