@@ -509,21 +509,9 @@ function buildChatCommands(): ChatCommandDefinition[] {
       acceptsArgs: true,
       category: "session",
     }),
-    defineChatCommand({
-      key: "compact",
-      nativeName: "compact",
-      description: "Compact the session context.",
-      textAlias: "/compact",
-      category: "session",
-      args: [
-        {
-          name: "instructions",
-          description: "Extra compaction instructions",
-          type: "string",
-          captureRemaining: true,
-        },
-      ],
-    }),
+    // /compact command REMOVED — compaction replaced by memory consolidation sleep cycle.
+    // The handler in commands-compact.ts still intercepts "/compact" text and
+    // returns a deprecation notice.
     defineChatCommand({
       key: "think",
       nativeName: "think",

@@ -50,7 +50,8 @@ import {
 } from "../pi-embedded-helpers.js";
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../usage.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
-import { compactEmbeddedPiSessionDirect } from "./compact.js";
+// DISABLED: compaction replaced by memory consolidation sleep cycle
+// import { compactEmbeddedPiSessionDirect } from "./compact.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { resolveModel } from "./model.js";
@@ -712,57 +713,19 @@ export async function runEmbeddedPiAgent(
               );
               continue;
             }
-            // Attempt explicit overflow compaction only when this attempt did not
-            // already auto-compact.
+            // --- COMPACTION DISABLED: memory consolidation sleep cycle replaces compaction ---
+            // Explicit overflow compaction has been removed. The memory consolidation
+            // pipeline (before_reset hook) handles session cleansing and memory writes.
+            // Tool result truncation below is preserved for genuinely oversized results.
             if (
               !isCompactionFailure &&
               !hadAttemptLevelCompaction &&
               overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS
             ) {
-              if (log.isEnabled("debug")) {
-                log.debug(
-                  `[compaction-diag] decision diagId=${overflowDiagId} branch=compact ` +
-                    `isCompactionFailure=${isCompactionFailure} hasOversizedToolResults=unknown ` +
-                    `attempt=${overflowCompactionAttempts + 1} maxAttempts=${MAX_OVERFLOW_COMPACTION_ATTEMPTS}`,
-                );
-              }
               overflowCompactionAttempts++;
-              log.warn(
-                `context overflow detected (attempt ${overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS}); attempting auto-compaction for ${provider}/${modelId}`,
-              );
-              const compactResult = await compactEmbeddedPiSessionDirect({
-                sessionId: params.sessionId,
-                sessionKey: params.sessionKey,
-                messageChannel: params.messageChannel,
-                messageProvider: params.messageProvider,
-                agentAccountId: params.agentAccountId,
-                authProfileId: lastProfileId,
-                sessionFile: params.sessionFile,
-                workspaceDir: resolvedWorkspace,
-                agentDir,
-                config: params.config,
-                skillsSnapshot: params.skillsSnapshot,
-                senderIsOwner: params.senderIsOwner,
-                provider,
-                model: modelId,
-                runId: params.runId,
-                thinkLevel,
-                reasoningLevel: params.reasoningLevel,
-                bashElevated: params.bashElevated,
-                extraSystemPrompt: params.extraSystemPrompt,
-                ownerNumbers: params.ownerNumbers,
-                trigger: "overflow",
-                diagId: overflowDiagId,
-                attempt: overflowCompactionAttempts,
-                maxAttempts: MAX_OVERFLOW_COMPACTION_ATTEMPTS,
-              });
-              if (compactResult.compacted) {
-                autoCompactionCount += 1;
-                log.info(`auto-compaction succeeded for ${provider}/${modelId}; retrying prompt`);
-                continue;
-              }
-              log.warn(
-                `auto-compaction failed for ${provider}/${modelId}: ${compactResult.reason ?? "nothing to compact"}`,
+              log.info(
+                `context overflow (attempt ${overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS}): ` +
+                  `compaction disabled — memory consolidation will run on session reset`,
               );
             }
             // Fallback: try truncating oversized tool results in the session.
@@ -832,8 +795,8 @@ export async function runEmbeddedPiAgent(
               payloads: [
                 {
                   text:
-                    "Context overflow: prompt too large for the model. " +
-                    "Try /reset (or /new) to start a fresh session, or use a larger-context model.",
+                    "⚙️ Context limit reached — consolidating memories and starting fresh session. " +
+                    "Use /reset to trigger memory consolidation now, or switch to a larger-context model.",
                   isError: true,
                 },
               ],

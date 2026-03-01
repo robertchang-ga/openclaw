@@ -9,15 +9,16 @@ import { SILENT_REPLY_TOKEN } from "../tokens.js";
 export const DEFAULT_MEMORY_FLUSH_SOFT_TOKENS = 4000;
 
 export const DEFAULT_MEMORY_FLUSH_PROMPT = [
-  "Pre-compaction memory flush.",
-  "Store durable memories now (use memory/YYYY-MM-DD.md; create memory/ if needed).",
-  "IMPORTANT: If the file already exists, APPEND new content only and do not overwrite existing entries.",
+  "Session nearing context limit.",
+  "Update MEMORY.md with any new durable facts, preferences, entities, or decisions.",
+  "APPEND only — do not overwrite existing entries.",
   `If nothing to store, reply with ${SILENT_REPLY_TOKEN}.`,
 ].join(" ");
 
 export const DEFAULT_MEMORY_FLUSH_SYSTEM_PROMPT = [
-  "Pre-compaction memory flush turn.",
-  "The session is near auto-compaction; capture durable memories to disk.",
+  "Proactive semantic memory flush.",
+  "The session is nearing context limits; capture durable knowledge to MEMORY.md.",
+  "Episodic reflections are handled separately — focus on facts, preferences, and entities.",
   `You may reply, but usually ${SILENT_REPLY_TOKEN} is correct.`,
 ].join(" ");
 

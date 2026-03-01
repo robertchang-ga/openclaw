@@ -11,7 +11,7 @@ const DEFAULT_SEARCH_TYPE = "GRAPH_COMPLETION";
 const DEFAULT_MAX_RESULTS = 6;
 const DEFAULT_MIN_SCORE = 0;
 const DEFAULT_MAX_TOKENS = 512;
-const DEFAULT_AUTO_RECALL = false;
+const DEFAULT_AUTO_RECALL = true; // Enabled: sleep cycle produces quality memory data for retrieval
 const DEFAULT_AUTO_INDEX = true;
 const DEFAULT_AUTO_COGNIFY = true;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
@@ -827,6 +827,63 @@ const memoryCogneePlugin = {
             });
         }
         // ------------------------------------------------------------------
+        // Sleep cycle: before_reset hook
+        // ------------------------------------------------------------------
+        // Re-entrancy guard: the sleep cycle itself triggers a reset,
+        // which would fire before_reset again → infinite loop.
+        let sleepCycleRunning = false;
+        async function runSleepCycle(sessionFile, workspaceDir, messages, reason) {
+            if (sleepCycleRunning) return;
+            sleepCycleRunning = true;
+            try {
+                api.logger.info?.("memory-cognee: sleep cycle starting — consolidating memories");
+                let cleansedFilename = null;
+                // Step 1: forced consolidation turn (episodic reflection + MEMORY.md)
+                try {
+                    const { forceConsolidationTurn } = await import("./consolidation-writer.js");
+                    const consolidationResult = await forceConsolidationTurn({
+                        messages: messages || [],
+                        sessionFile,
+                        reason: reason || "reset",
+                    });
+                    if (consolidationResult.episodePath) {
+                        api.logger.info?.(
+                            `memory-cognee: episodic reflection → ${consolidationResult.episodePath}`
+                        );
+                    }
+                    if (consolidationResult.memoryUpdated) {
+                        api.logger.info?.("memory-cognee: MEMORY.md updated");
+                    }
+                } catch (consolErr) {
+                    api.logger.warn?.(`memory-cognee: consolidation turn failed: ${String(consolErr)}`);
+                }
+                // Step 2: cleanse transcript (Pass 1 deterministic + Pass 2 via agent)
+                try {
+                    const { cleanseTranscript } = await import("./transcript-cleaner.js");
+                    const result = await cleanseTranscript(sessionFile);
+                    if (result.outputPath) {
+                        cleansedFilename = result.outputPath.split(/[/\\]/).pop();
+                        api.logger.info?.(
+                            `memory-cognee: transcript cleansed → ${result.outputPath} ` +
+                            `(${result.stats.entryCount} entries, ${result.stats.orphanCount} orphans)`
+                        );
+                    }
+                } catch (cleanErr) {
+                    api.logger.warn?.(`memory-cognee: transcript cleansing failed: ${String(cleanErr)}`);
+                }
+                api.logger.info?.("memory-cognee: sleep cycle complete");
+            } catch (err) {
+                api.logger.warn?.(`memory-cognee: sleep cycle failed: ${String(err)}`);
+            } finally {
+                sleepCycleRunning = false;
+            }
+        }
+        api.on("before_reset", async (event, ctx) => {
+            if (sleepCycleRunning || !event.sessionFile) return;
+            api.logger.info?.(`memory-cognee: before_reset hook fired, running sleep cycle`);
+            await runSleepCycle(event.sessionFile, ctx.workspaceDir, event.messages, event.reason);
+        });
+        // ------------------------------------------------------------------
         // Post-agent sync: detect file changes and sync to Cognee
         // ------------------------------------------------------------------
         if (cfg.autoIndex) {
@@ -857,6 +914,152 @@ const memoryCogneePlugin = {
                     api.logger.warn?.(`memory-cognee: post-agent sync failed: ${String(error)}`);
                 }
             });
+        }
+        // ------------------------------------------------------------------
+        // CLI: openclaw cognee consolidate
+        // ------------------------------------------------------------------
+        api.registerCli(async (ctx) => {
+            const consolidate = ctx.program
+                .command("consolidate")
+                .description("Run memory consolidation on all unprocessed session transcripts.");
+            consolidate.action(async () => {
+                const cleanseIndexPath = join(homedir(), ".openclaw", "memory", "cognee", "cleanse-index.json");
+                let cleanseIndex = { entries: {} };
+                try {
+                    const raw = await fs.readFile(cleanseIndexPath, "utf-8");
+                    cleanseIndex = JSON.parse(raw);
+                } catch { /* first run */ }
+                // Find all session files across all agents
+                const agentsDir = join(homedir(), ".openclaw", "agents");
+                let sessionFiles = [];
+                try {
+                    const agentIds = await fs.readdir(agentsDir);
+                    for (const agentId of agentIds) {
+                        const sessionsDir = join(agentsDir, agentId, "sessions");
+                        try {
+                            const files = await fs.readdir(sessionsDir);
+                            const jsonlFiles = files
+                                .filter((f) => f.endsWith(".jsonl"))
+                                .map((f) => join(sessionsDir, f));
+                            sessionFiles.push(...jsonlFiles);
+                        } catch { /* agent may not have sessions */ }
+                    }
+                } catch {
+                    ctx.logger.warn?.("No agents directory found");
+                    return;
+                }
+                ctx.logger.info?.(`Found ${sessionFiles.length} session file(s)`);
+                let processed = 0;
+                for (const sessionFile of sessionFiles) {
+                    const filename = sessionFile.split(/[/\\]/).pop();
+                    try {
+                        const stat = await fs.stat(sessionFile);
+                        const existing = cleanseIndex.entries[filename];
+                        // Corruption check: validate fileSize + mtime
+                        if (existing &&
+                            existing.fileSize === stat.size &&
+                            existing.mtime === stat.mtimeMs) {
+                            continue; // Already processed and unchanged
+                        }
+                        const { cleanseTranscript } = await import("./transcript-cleaner.js");
+                        const result = await cleanseTranscript(sessionFile);
+                        if (result.outputPath) {
+                            // Update index
+                            cleanseIndex.entries[filename] = {
+                                sessionId: filename.replace(/\.jsonl$/, ""),
+                                fileSize: stat.size,
+                                mtime: stat.mtimeMs,
+                                cleansedAt: Date.now(),
+                                outputPath: result.outputPath,
+                            };
+                            processed++;
+                            ctx.logger.info?.(`Cleansed: ${filename} → ${result.outputPath}`);
+                        }
+                    } catch (err) {
+                        ctx.logger.warn?.(`Failed to process ${filename}: ${String(err)}`);
+                    }
+                }
+                // Save updated index
+                try {
+                    await fs.mkdir(dirname(cleanseIndexPath), { recursive: true });
+                    await fs.writeFile(cleanseIndexPath, JSON.stringify(cleanseIndex, null, 2), "utf-8");
+                } catch (err) {
+                    ctx.logger.warn?.(`Failed to save cleanse index: ${String(err)}`);
+                }
+                ctx.logger.info?.(`Consolidation complete: ${processed} session(s) processed`);
+                // Also process Fireflies meeting transcripts
+                await cleanseFirefliesTranscripts(ctx.logger);
+            });
+        }, { commands: ["consolidate"] });
+        // ------------------------------------------------------------------
+        // Fireflies meeting transcript cleaner
+        // ------------------------------------------------------------------
+        async function cleanseFirefliesTranscripts(logger) {
+            const rawDir = join(homedir(), ".openclaw", "workspace", "bpc_transcripts");
+            const outputDir = join(homedir(), ".openclaw", "workspace", "memory", "bpc_meetings");
+            let files = [];
+            try {
+                files = (await fs.readdir(rawDir)).filter((f) => f.endsWith(".txt"));
+            } catch {
+                logger?.debug?.("No Fireflies transcripts directory found");
+                return;
+            }
+            if (files.length === 0) return;
+            logger?.info?.(`Found ${files.length} Fireflies transcript(s) to process`);
+            await fs.mkdir(outputDir, { recursive: true });
+            let processed = 0;
+            for (const file of files) {
+                const inputPath = join(rawDir, file);
+                const outputFile = file.replace(/\.txt$/, ".md");
+                const outputPath = join(outputDir, outputFile);
+                // Skip if already cleaned
+                try {
+                    await fs.access(outputPath);
+                    continue; // Already exists
+                } catch { /* doesn't exist yet, proceed */ }
+                try {
+                    const content = await fs.readFile(inputPath, "utf-8");
+                    // Extract metadata from filename pattern:
+                    // 2026-02-27T15-30-00-000Z_heavenly_holidays_purchase_order_fun.txt
+                    const isoMatch = file.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-\d{2}-\d{3}Z_(.+)\.txt$/);
+                    const date = isoMatch ? isoMatch[1] : file.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || new Date().toISOString().split("T")[0];
+                    const time = isoMatch ? `${isoMatch[2]}:${isoMatch[3]}` : undefined;
+                    const titleRaw = isoMatch
+                        ? isoMatch[4]
+                        : file.replace(/^\d{4}-\d{2}-\d{2}T[^_]*_?/, "").replace(/\.txt$/, "");
+                    const title = titleRaw.replace(/_/g, " ").trim() || "Meeting";
+                    // Extract participants from speaker labels: [Speaker Name]: text
+                    const speakerPattern = /^\[([^\]]+)\]:\s/gm;
+                    const speakers = new Set();
+                    let match;
+                    while ((match = speakerPattern.exec(content)) !== null) {
+                        const speaker = match[1].trim();
+                        if (speaker.length > 1 && speaker.length < 50) {
+                            speakers.add(speaker);
+                        }
+                    }
+                    // Build frontmatter
+                    const frontmatter = [
+                        "---",
+                        "type: meeting",
+                        "source: fireflies",
+                        `date: ${date}`,
+                        time ? `time: "${time} UTC"` : null,
+                        `participants: [${[...speakers].join(", ")}]`,
+                        `title: "${title}"`,
+                        "---",
+                        "",
+                    ].filter(Boolean).join("\n");
+                    await fs.writeFile(outputPath, frontmatter + content, "utf-8");
+                    processed++;
+                    logger?.info?.(`Fireflies: ${file} → ${outputFile}`);
+                } catch (err) {
+                    logger?.warn?.(`Failed to process Fireflies transcript ${file}: ${String(err)}`);
+                }
+            }
+            if (processed > 0) {
+                logger?.info?.(`Fireflies: ${processed} transcript(s) processed`);
+            }
         }
     },
 };

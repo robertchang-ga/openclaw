@@ -1,0 +1,426 @@
+/**
+ * transcript-cleaner.js
+ *
+ * Memory Consolidation Pipeline — Transcript Cleaner
+ *
+ * Converts raw JSONL session transcripts into clean, structured markdown.
+ * Two-pass design:
+ *   Pass 1 (deterministic, zero LLM cost) — strips noise, preserves significant outputs
+ *   Pass 2 (LLM) — entity normalization, pronoun resolution, narrative collapsing
+ *
+ * Usage:
+ *   import { cleanseTranscript } from './transcript-cleaner.js';
+ *   const result = await cleanseTranscript(sessionFilePath, options);
+ */
+
+import fs from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { homedir } from "node:os";
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+const CLEANSED_SESSIONS_DIR = join(
+  homedir(),
+  ".openclaw",
+  "workspace",
+  "memory",
+  "cleansed-sessions"
+);
+
+/** Entry types to skip entirely (non-message metadata). */
+const SKIP_TYPES = new Set([
+  "session",
+  "model_change",
+  "thinking_level_change",
+  "custom",
+  "reasoning_level_change",
+]);
+
+/** Metadata fields to strip from entries. */
+const METADATA_FIELDS = [
+  "textSignature",
+  "thoughtSignature",
+  "usage",
+  "cost",
+  "api",
+  "provider",
+  "model",
+  "stopReason",
+  "providerMeta",
+  "apiMeta",
+  "modelMeta",
+];
+
+/** Regex patterns for noise to strip from message content. */
+const CONTENT_NOISE_PATTERNS = [
+  // Conversation info + Sender JSON blocks (injected into user messages)
+  /Conversation info:\s*```json[\s\S]*?```\s*/g,
+  /Sender:\s*```json[\s\S]*?```\s*/g,
+  // <final>[[reply_to_current]] wrapper
+  /<final>\[\[reply_to_current\]\]/g,
+  /\[\[reply_to_current\]\]\s*/g,
+  // <cognee_memories> blocks (injected recalls)
+  /<cognee_memories>[\s\S]*?<\/cognee_memories>\s*/g,
+  // Config warnings (plugin id mismatch, etc.)
+  /⚠️\s*Warning:.*plugin id mismatch.*\n?/gi,
+  // Repetitive system noise
+  /\[System\]\s*Plugin.*loaded.*\n?/gi,
+];
+
+/** Tool names whose output is ephemeral (scaffolding, not significant). */
+const EPHEMERAL_TOOL_PATTERNS = [
+  /^(read_file|view_file|list_dir|find_file|cat|ls|pwd)$/i,
+  /^(get_config|check_config|read_config)$/i,
+  /^(which|type|where|file)$/i,
+];
+
+// ---------------------------------------------------------------------------
+// Pass 1: Deterministic Cleaning
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse JSONL file into an array of entries.
+ */
+async function parseJsonlFile(filePath) {
+  const content = await fs.readFile(filePath, "utf-8");
+  const entries = [];
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      entries.push(JSON.parse(trimmed));
+    } catch {
+      // Skip malformed lines
+    }
+  }
+  return entries;
+}
+
+/**
+ * Build the conversation chain by walking the linked list (id → parentId).
+ * Returns entries in parent→child order (chronological).
+ * Orphaned entries (broken parentId) are appended at the end with a marker.
+ */
+function buildChain(entries) {
+  if (entries.length === 0) return [];
+
+  // Build lookup maps
+  const byId = new Map();
+  const childrenOf = new Map(); // parentId → [entry]
+  for (const entry of entries) {
+    if (entry.id) byId.set(entry.id, entry);
+    const pid = entry.parentId;
+    if (pid) {
+      if (!childrenOf.has(pid)) childrenOf.set(pid, []);
+      childrenOf.get(pid).push(entry);
+    }
+  }
+
+  // Find root: entry whose parentId is missing or not in the file
+  const roots = entries.filter(
+    (e) => !e.parentId || !byId.has(e.parentId)
+  );
+
+  // Walk from root(s) in order
+  const visited = new Set();
+  const ordered = [];
+
+  function walk(entry) {
+    if (!entry || visited.has(entry.id)) return;
+    visited.add(entry.id);
+    ordered.push(entry);
+    // Follow children (main branch = last child for retries)
+    const children = childrenOf.get(entry.id) || [];
+    if (children.length === 1) {
+      walk(children[0]);
+    } else if (children.length > 1) {
+      // On forks, follow the main branch (last child = most recent)
+      // But walk all branches to capture everything
+      for (const child of children) {
+        walk(child);
+      }
+    }
+  }
+
+  for (const root of roots) {
+    walk(root);
+  }
+
+  // Collect orphans (entries not reached by walking)
+  const orphans = entries.filter((e) => e.id && !visited.has(e.id));
+  for (const orphan of orphans) {
+    orphan._orphaned = true;
+    ordered.push(orphan);
+  }
+
+  if (orphans.length > 0) {
+    console.warn(
+      `[transcript-cleaner] ${orphans.length} orphaned entries found (broken parentId chain)`
+    );
+  }
+
+  return ordered;
+}
+
+/**
+ * Extract text content from a message entry's content field.
+ * Handles both string content and array-of-parts content.
+ */
+function extractTextContent(message) {
+  if (!message?.content) return "";
+  if (typeof message.content === "string") return message.content;
+  if (Array.isArray(message.content)) {
+    return message.content
+      .filter((part) => part.type === "text" && part.text)
+      .map((part) => part.text)
+      .join("\n");
+  }
+  return "";
+}
+
+/**
+ * Check if a tool call output is "significant" (not ephemeral scaffolding).
+ * Significant outputs are preserved; ephemeral ones are summarized.
+ */
+function isSignificantToolOutput(toolName) {
+  return !EPHEMERAL_TOOL_PATTERNS.some((pattern) => pattern.test(toolName));
+}
+
+/**
+ * Strip noise patterns from text content.
+ */
+function stripContentNoise(text) {
+  let cleaned = text;
+  for (const pattern of CONTENT_NOISE_PATTERNS) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+  return cleaned.trim();
+}
+
+/**
+ * Check if an assistant message is empty (signature-only, no real text).
+ */
+function isEmptyAssistantTurn(entry) {
+  if (entry.message?.role !== "assistant") return false;
+  const text = extractTextContent(entry.message);
+  return !text || text.trim().length === 0;
+}
+
+/**
+ * Process a single entry and return a markdown fragment, or null to skip.
+ */
+function processEntry(entry) {
+  const type = entry.type;
+
+  // Skip non-message types
+  if (SKIP_TYPES.has(type)) return null;
+
+  // Handle compaction entries specially — preserve summary + timestamp
+  if (type === "compaction") {
+    const summary = entry.summary || entry.message?.content || "[no summary]";
+    const ts = entry.timestamp || entry.createdAt || "unknown time";
+    return `\n---\n**[Compaction Summary — ${ts}]**\n${summary}\n---\n`;
+  }
+
+  // Skip entries without messages
+  if (type !== "message" || !entry.message) return null;
+
+  const message = entry.message;
+  const role = message.role;
+
+  // Skip empty assistant turns
+  if (role === "assistant" && isEmptyAssistantTurn(entry)) return null;
+
+  // Extract and clean text
+  let text = extractTextContent(message);
+  text = stripContentNoise(text);
+
+  if (!text && role !== "assistant") return null;
+
+  // Format with speaker labels
+  const speaker = role === "user" ? "**User**" : "**Agent**";
+
+  // Handle tool use in assistant messages
+  const toolCalls = [];
+  if (Array.isArray(message.content)) {
+    for (const part of message.content) {
+      if (part.type === "tool_use" || part.type === "function_call") {
+        const toolName = part.name || part.function?.name || "unknown_tool";
+        if (isSignificantToolOutput(toolName)) {
+          toolCalls.push(`  - Used tool: \`${toolName}\``);
+        }
+      }
+    }
+  }
+
+  // Handle tool results
+  if (role === "tool" || message.role === "tool") {
+    const toolName = entry.toolName || message.name || "tool";
+    if (!isSignificantToolOutput(toolName)) {
+      return null; // Skip ephemeral tool results entirely
+    }
+    // Truncate very long tool results
+    const maxLen = 2000;
+    const resultText = text.length > maxLen ? text.slice(0, maxLen) + "\n[...truncated]" : text;
+    return `\n> **Tool result** (\`${toolName}\`):\n> ${resultText.split("\n").join("\n> ")}\n`;
+  }
+
+  // Build the output
+  let output = `\n${speaker}: ${text}`;
+  if (toolCalls.length > 0) {
+    output += "\n" + toolCalls.join("\n");
+  }
+
+  // Mark orphaned entries
+  if (entry._orphaned) {
+    output = `\n[Orphaned Entry]\n${output}`;
+  }
+
+  return output;
+}
+
+/**
+ * Generate session metadata for the frontmatter.
+ */
+function generateSessionMeta(entries) {
+  const firstEntry = entries.find((e) => e.timestamp || e.createdAt);
+  const lastEntry = [...entries].reverse().find((e) => e.timestamp || e.createdAt);
+
+  const startTime = firstEntry?.timestamp || firstEntry?.createdAt || new Date().toISOString();
+  const endTime = lastEntry?.timestamp || lastEntry?.createdAt || startTime;
+
+  const startDate = new Date(startTime);
+  const endDate = new Date(endTime);
+
+  const sessionId = entries.find((e) => e.sessionId)?.sessionId || "unknown";
+
+  const formatTime = (d) => {
+    const h = d.getHours().toString().padStart(2, "0");
+    const m = d.getMinutes().toString().padStart(2, "0");
+    return `${h}:${m}`;
+  };
+
+  const dateStr = startDate.toISOString().split("T")[0];
+  const timeRange = `${formatTime(startDate)}-${formatTime(endDate)} EST`;
+
+  return { dateStr, timeRange, sessionId, startDate };
+}
+
+/**
+ * Run Pass 1: deterministic cleaning.
+ * Returns a clean markdown string.
+ */
+async function pass1(filePath) {
+  const rawEntries = await parseJsonlFile(filePath);
+
+  if (rawEntries.length === 0) {
+    return { markdown: "", meta: null, entryCount: 0 };
+  }
+
+  // Build chronological chain
+  const ordered = buildChain(rawEntries);
+
+  // Generate metadata
+  const meta = generateSessionMeta(ordered);
+
+  // Process each entry
+  const fragments = [];
+  for (const entry of ordered) {
+    const fragment = processEntry(entry);
+    if (fragment) {
+      fragments.push(fragment);
+    }
+  }
+
+  // Build frontmatter
+  const frontmatter = [
+    "---",
+    "type: session",
+    `session_id: ${meta.sessionId}`,
+    `date: ${meta.dateStr}`,
+    `time_range: "${meta.timeRange}"`,
+    "---",
+  ].join("\n");
+
+  const markdown = frontmatter + "\n" + fragments.join("\n");
+
+  return {
+    markdown,
+    meta,
+    entryCount: ordered.length,
+    processedCount: fragments.length,
+    orphanCount: ordered.filter((e) => e._orphaned).length,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pass 2: LLM Cleaning (stub — implemented via SKILL.md agent turn)
+// ---------------------------------------------------------------------------
+
+// Pass 2 is handled by the agent via the memory-consolidation SKILL.
+// It receives the Pass 1 output and applies:
+//   min: entity normalization (lookup + LLM for unknowns)
+//   full: + pronoun resolution, narrative collapsing, ambiguity marking
+//
+// This is triggered as an agentic turn, not inline here.
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Cleanse a session transcript (JSONL → markdown).
+ *
+ * @param {string} sessionFilePath - Path to the raw .jsonl session file
+ * @param {object} options
+ * @param {string} [options.outputDir] - Override output directory
+ * @returns {{ outputPath: string, stats: object }}
+ */
+export async function cleanseTranscript(sessionFilePath, options = {}) {
+  const outputDir = options.outputDir || CLEANSED_SESSIONS_DIR;
+
+  // Run Pass 1
+  const result = await pass1(sessionFilePath);
+
+  if (!result.meta) {
+    console.warn("[transcript-cleaner] empty session file, nothing to cleanse");
+    return { outputPath: null, stats: { entryCount: 0 } };
+  }
+
+  // Generate output filename from session start time
+  const ts = result.meta.startDate;
+  const timestamp = [
+    ts.getFullYear(),
+    String(ts.getMonth() + 1).padStart(2, "0"),
+    String(ts.getDate()).padStart(2, "0"),
+    "_",
+    String(ts.getHours()).padStart(2, "0"),
+    String(ts.getMinutes()).padStart(2, "0"),
+    String(ts.getSeconds()).padStart(2, "0"),
+  ].join("");
+  const outputPath = join(outputDir, `${timestamp}.md`);
+
+  // Ensure output directory exists
+  await fs.mkdir(outputDir, { recursive: true });
+
+  // Write Pass 1 output
+  await fs.writeFile(outputPath, result.markdown, "utf-8");
+
+  console.log(
+    `[transcript-cleaner] Pass 1 complete: ${result.entryCount} entries → ` +
+      `${result.processedCount} fragments, ${result.orphanCount} orphans → ${outputPath}`
+  );
+
+  return {
+    outputPath,
+    stats: {
+      entryCount: result.entryCount,
+      processedCount: result.processedCount,
+      orphanCount: result.orphanCount,
+    },
+  };
+}
+
+export default { cleanseTranscript };
