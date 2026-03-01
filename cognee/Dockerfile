@@ -1,7 +1,7 @@
 FROM cognee/cognee:latest
 
 # Install graphiti-core (optional extra not included in base image)
-RUN /app/.venv/bin/pip install --no-cache-dir "graphiti-core>=0.7.0,<0.8"
+RUN /app/.venv/bin/python -m pip install --no-cache-dir "graphiti-core>=0.7.0,<0.8"
 
 # Add custom Graphiti router module
 COPY graphiti_router.py /app/cognee/api/v1/graphiti_router.py
