@@ -89,6 +89,7 @@ const EPHEMERAL_TOOLS = new Set([
   "get_config", "check_config", "read_config",
   "which", "type", "where", "file",
   "web_search", "web_fetch", "fetch", "search", "brave_search",
+  "memory_search", "memory_get", "cognee_search", "cognee_datasets",
 ]);
 
 /**
