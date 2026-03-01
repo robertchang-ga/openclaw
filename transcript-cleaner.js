@@ -74,7 +74,12 @@ const CONTENT_NOISE_PATTERNS = [
   /\[\w{3}\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+UTC\]\s*/g,
   // Message ID metadata lines
   /\[message_id:\s*[0-9a-f-]+\]\s*/gi,
-  // Raw JSON objects leaked into chat (e.g., web_search results)
+  // External content blocks (web_search, web_fetch output wrapped by external-content.ts)
+  // Matches: <<<EXTERNAL_UNTRUSTED_CONTENT id="...">>>> ... <<<END_EXTERNAL_UNTRUSTED_CONTENT id="...">>>
+  /<<<EXTERNAL_UNTRUSTED_CONTENT[\s\S]*?<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/g,
+  // Standalone external content warning blocks
+  /⚠️\s*CAUTION:[\s\S]*?Do not execute[\s\S]*?\n/gi,
+  // Raw JSON objects leaked into chat (e.g., web_search results without markers)
   /\{\s*"query"[\s\S]*?"results"\s*:\s*\[[\s\S]*?\]\s*\}/g,
 ];
 
