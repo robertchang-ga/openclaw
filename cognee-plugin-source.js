@@ -789,7 +789,7 @@ const memoryCogneePlugin = {
                             try {
                                 const files = await fs.readdir(sessionsDir);
                                 const jsonlFiles = files
-                                    .filter((f) => f.endsWith(".jsonl"))
+                                    .filter((f) => f.includes(".jsonl") && !f.includes(".deleted."))
                                     .map((f) => join(sessionsDir, f));
                                 sessionFiles.push(...jsonlFiles);
                             } catch { /* directory may not exist */ }
