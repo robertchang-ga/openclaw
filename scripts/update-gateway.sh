@@ -64,7 +64,7 @@ cp cognee-plugin-source.js "$PLUGIN_DIR/index.js"
 cp transcript-cleaner.js "$PLUGIN_DIR/transcript-cleaner.js"
 
 echo "==> Building Docker images (cached)..."
-docker build -t "${OPENCLAW_IMAGE:-openclaw:local}" .
+docker build -t openclaw-gateway .
 docker build -f Dockerfile.voice-sidecar -t openclaw-voice-sidecar:latest .
 docker compose build cognee
 
