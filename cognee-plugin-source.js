@@ -1054,44 +1054,80 @@ const memoryCogneePlugin = {
                 const outputFile = file.replace(/\.txt$/, ".md");
                 const outputPath = join(outputDir, outputFile);
                 try {
-                    const content = await fs.readFile(inputPath, "utf-8");
+                    const rawContent = await fs.readFile(inputPath, "utf-8");
                     // Extract metadata from filename pattern:
                     // 2026-02-27T15-30-00-000Z_heavenly_holidays_purchase_order_fun.txt
-                    const isoMatch = file.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-\d{2}-\d{3}Z_(.+)\.txt$/);
+                    const isoMatch = file.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-\d{3}Z_(.+)\.txt$/);
                     const date = isoMatch ? isoMatch[1] : file.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || new Date().toISOString().split("T")[0];
-                    const time = isoMatch ? `${isoMatch[2]}:${isoMatch[3]}` : undefined;
+                    const startHour = isoMatch ? parseInt(isoMatch[2], 10) : undefined;
+                    const startMin = isoMatch ? parseInt(isoMatch[3], 10) : undefined;
+                    const startSec = isoMatch ? parseInt(isoMatch[4], 10) : undefined;
+                    const hasAbsoluteStart = startHour !== undefined && startMin !== undefined && startSec !== undefined;
+                    const startTimeStr = hasAbsoluteStart
+                        ? `${String(startHour).padStart(2, "0")}:${String(startMin).padStart(2, "0")}`
+                        : undefined;
                     const titleRaw = isoMatch
-                        ? isoMatch[4]
+                        ? isoMatch[5]
                         : file.replace(/^\d{4}-\d{2}-\d{2}T[^_]*_?/, "").replace(/\.txt$/, "");
                     const title = titleRaw.replace(/_/g, " ").trim() || "Meeting";
-                    // Extract participants from speaker labels: [Speaker Name]: text
-                    const speakerPattern = /^\[([^\]]+)\]:\s/gm;
+                    // Extract participants from speaker labels: [HH:MM:SS] [Speaker Name]: text
+                    const speakerPattern = /\[(\d{2}:\d{2}:\d{2})\]\s*\[([^\]]+)\]:\s/g;
                     const speakers = new Set();
                     let match;
-                    while ((match = speakerPattern.exec(content)) !== null) {
-                        const speaker = match[1].trim();
+                    while ((match = speakerPattern.exec(rawContent)) !== null) {
+                        const speaker = match[2].trim();
                         if (speaker.length > 1 && speaker.length < 50) {
                             speakers.add(speaker);
                         }
                     }
+                    // Convert relative timestamps [HH:MM:SS] to absolute [HH:MM UTC]
+                    // Input:  [00:00:04] [Robert Chang]: text
+                    // Output: [15:30 UTC] [Robert Chang]: text
+                    const linePattern = /^\[(\d{2}):(\d{2}):(\d{2})\]\s*(\[.+)$/;
+                    const transformedLines = [];
+                    for (const line of rawContent.split("\n")) {
+                        const lineMatch = line.match(linePattern);
+                        if (lineMatch && hasAbsoluteStart) {
+                            const offH = parseInt(lineMatch[1], 10);
+                            const offM = parseInt(lineMatch[2], 10);
+                            const offS = parseInt(lineMatch[3], 10);
+                            const totalSeconds = (startHour * 3600 + startMin * 60 + startSec) + (offH * 3600 + offM * 60 + offS);
+                            const absH = Math.floor(totalSeconds / 3600) % 24;
+                            const absM = Math.floor((totalSeconds % 3600) / 60);
+                            transformedLines.push(`[${String(absH).padStart(2, "0")}:${String(absM).padStart(2, "0")} UTC] ${lineMatch[4]}`);
+                        } else {
+                            transformedLines.push(line);
+                        }
+                    }
+                    const transformedContent = transformedLines.join("\n");
+                    // Compute time_range from first and last transcript line
+                    const allOffsets = [...rawContent.matchAll(/\[(\d{2}):(\d{2}):(\d{2})\]\s*\[/g)];
+                    let endTimeStr = startTimeStr;
+                    if (allOffsets.length > 0 && hasAbsoluteStart) {
+                        const last = allOffsets[allOffsets.length - 1];
+                        const lastOff = parseInt(last[1], 10) * 3600 + parseInt(last[2], 10) * 60 + parseInt(last[3], 10);
+                        const endTotal = (startHour * 3600 + startMin * 60 + startSec) + lastOff;
+                        endTimeStr = `${String(Math.floor(endTotal / 3600) % 24).padStart(2, "0")}:${String(Math.floor((endTotal % 3600) / 60)).padStart(2, "0")}`;
+                    }
+                    const timeRange = startTimeStr && endTimeStr ? `${startTimeStr}-${endTimeStr} UTC` : undefined;
                     // Build frontmatter
                     const frontmatter = [
                         "---",
                         "type: meeting",
                         "source: fireflies",
                         `date: ${date}`,
-                        time ? `time: "${time} UTC"` : null,
+                        timeRange ? `time_range: "${timeRange}"` : null,
                         `participants: [${[...speakers].join(", ")}]`,
                         `title: "${title}"`,
                         "---",
                         "",
                     ].filter(Boolean).join("\n");
-                    await fs.writeFile(outputPath, frontmatter + content, { encoding: "utf-8", flag: "wx" });
+                    await fs.writeFile(outputPath, frontmatter + transformedContent, { encoding: "utf-8", flag: "wx" });
                     processed++;
-                    logger?.info?.(`Fireflies: ${file} → ${outputFile}`);
+                    logger?.info?.(`Fireflies: ${file} \u2192 ${outputFile}`);
                 } catch (err) {
                     if (err?.code === "EEXIST") {
-                        continue; // Already processed — skip
+                        continue; // Already processed \u2014 skip
                     }
                     logger?.warn?.(`Failed to process Fireflies transcript ${file}: ${String(err)}`);
                 }
