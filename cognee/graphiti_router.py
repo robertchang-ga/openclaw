@@ -59,9 +59,12 @@ def _resolve_graphiti_llm_config():
             or os.getenv("GEMINI_API_KEY")
             or os.getenv("LLM_API_KEY", "")
         )
+        # Strip litellm prefix (e.g., "gemini/gemini-3-flash-preview" → "gemini-3-flash-preview")
         gemini_model = llm_model or "gemini-2.0-flash"
+        if gemini_model.startswith("gemini/"):
+            gemini_model = gemini_model[len("gemini/"):]
         # Use Gemini's OpenAI-compatible endpoint
-        return LLMConfig(
+        return "gemini", LLMConfig(
             api_key=api_key,
             model=gemini_model,
             small_model=gemini_model,
@@ -72,7 +75,7 @@ def _resolve_graphiti_llm_config():
             os.getenv("OPENAI_API_KEY")
             or os.getenv("LLM_API_KEY", "")
         )
-        return LLMConfig(
+        return "openai", LLMConfig(
             api_key=api_key,
             model=llm_model or "gpt-4o-mini",
             small_model=llm_model or "gpt-4o-mini",
@@ -150,13 +153,19 @@ def get_graphiti_router() -> APIRouter:
             username = os.getenv("GRAPH_DATABASE_USERNAME", "neo4j")
             password = os.getenv("GRAPH_DATABASE_PASSWORD", "")
 
-            llm_config = _resolve_graphiti_llm_config()
+            provider_type, llm_config = _resolve_graphiti_llm_config()
             logger.info(
-                f"Graphiti LLM config: model={llm_config.model}, "
+                f"Graphiti LLM config: provider={provider_type}, model={llm_config.model}, "
                 f"base_url={llm_config.base_url}, "
                 f"api_key={'set' if llm_config.api_key else 'MISSING'}"
             )
-            llm_client = OpenAIClient(llm_config)
+            # Use OpenAIGenericClient for non-OpenAI providers (uses /chat/completions
+            # instead of /responses which Google's API doesn't support)
+            if provider_type == "gemini":
+                from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
+                llm_client = OpenAIGenericClient(llm_config)
+            else:
+                llm_client = OpenAIClient(llm_config)
             graphiti = Graphiti(url, username, password, llm_client=llm_client)
 
             await graphiti.build_indices_and_constraints()
@@ -224,7 +233,7 @@ def get_graphiti_router() -> APIRouter:
 
             # Show resolved config
             try:
-                resolved = _resolve_graphiti_llm_config()
+                _, resolved = _resolve_graphiti_llm_config()
                 resolved_info = {
                     "model": resolved.model,
                     "base_url": resolved.base_url,
