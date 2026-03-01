@@ -55,13 +55,15 @@ pnpm build
 echo "==> Building Docker images (cached)..."
 docker build -t openclaw-gateway .
 docker build -f Dockerfile.voice-sidecar -t openclaw-voice-sidecar:latest .
+docker compose build cognee
 
 if $FULL; then
   echo "==> Installing CLI globally..."
   npm install -g .
 fi
 
-echo "==> Restarting openclaw-gateway service..."
+echo "==> Restarting services..."
 sudo systemctl restart openclaw-gateway
+docker compose up -d cognee
 
-echo "==> Done! Gateway restarted (sidecars auto-started by gateway)."
+echo "==> Done! Gateway restarted, Cognee rebuilt (sidecars auto-started by gateway)."
