@@ -860,15 +860,41 @@ const memoryCogneePlugin = {
                 // The agentic consolidation turn (Pass 2) runs in commands-core.ts
                 // AFTER this hook completes, and expects frontmatted files.
 
-                // Session transcript Pass 1
+                // Session transcript Pass 1 — check cleanse-index to avoid redundant work
                 try {
-                    const { cleanseTranscript } = await import("./transcript-cleaner.js");
-                    const result = await cleanseTranscript(sessionFile);
-                    if (result.outputPath) {
-                        api.logger.info?.(
-                            `memory-cognee: transcript cleansed → ${result.outputPath} ` +
-                            `(${result.stats.entryCount} entries, ${result.stats.orphanCount} orphans)`
-                        );
+                    const cleanseIndexPath = join(homedir(), ".openclaw", "memory", "cognee", "cleanse-index.json");
+                    let cleanseIndex = { entries: {} };
+                    try {
+                        cleanseIndex = JSON.parse(await fs.readFile(cleanseIndexPath, "utf-8"));
+                    } catch { /* first run */ }
+
+                    const sessionFilename = sessionFile.split(/[/\\]/).pop();
+                    const stat = await fs.stat(sessionFile);
+                    const existing = cleanseIndex.entries[sessionFilename];
+
+                    if (existing && existing.fileSize === stat.size && existing.mtime === stat.mtimeMs) {
+                        api.logger.info?.("memory-cognee: session already cleansed by CLI, skipping Pass 1");
+                    } else {
+                        const { cleanseTranscript } = await import("./transcript-cleaner.js");
+                        const result = await cleanseTranscript(sessionFile, { logger: api.logger });
+                        if (result.outputPath) {
+                            api.logger.info?.(
+                                `memory-cognee: transcript cleansed → ${result.outputPath} ` +
+                                `(${result.stats.entryCount} entries, ${result.stats.orphanCount} orphans)`
+                            );
+                            // Update cleanse-index so CLI won't reprocess this file
+                            cleanseIndex.entries[sessionFilename] = {
+                                sessionId: sessionFilename.replace(/\.jsonl$/, ""),
+                                fileSize: stat.size,
+                                mtime: stat.mtimeMs,
+                                cleansedAt: Date.now(),
+                                outputPath: result.outputPath,
+                            };
+                            try {
+                                await fs.mkdir(dirname(cleanseIndexPath), { recursive: true });
+                                await fs.writeFile(cleanseIndexPath, JSON.stringify(cleanseIndex, null, 2), "utf-8");
+                            } catch { /* non-critical */ }
+                        }
                     }
                 } catch (cleanErr) {
                     api.logger.warn?.(`memory-cognee: transcript cleansing failed: ${String(cleanErr)}`);
