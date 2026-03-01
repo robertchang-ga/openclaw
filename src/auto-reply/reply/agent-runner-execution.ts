@@ -30,6 +30,7 @@ import type { TemplateContext } from "../templating.js";
 import type { VerboseLevel } from "../thinking.js";
 import { isSilentReplyPrefixText, isSilentReplyText, SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
+import { runConsolidationTurn } from "./agent-runner-consolidation.js";
 import {
   buildEmbeddedRunBaseParams,
   buildEmbeddedRunContexts,
@@ -429,22 +430,72 @@ export async function runAgentTurnWithFallback(params: {
           }))
         : [];
 
-      // Some embedded runs surface context overflow as an error payload instead of throwing.
-      // Treat those as a session-level failure and auto-recover by starting a fresh session.
       const embeddedError = runResult.meta?.error;
       if (
         embeddedError &&
         isContextOverflowError(embeddedError.message) &&
-        !didResetAfterCompactionFailure &&
-        (await params.resetSessionAfterCompactionFailure(embeddedError.message))
+        !didResetAfterCompactionFailure
       ) {
-        didResetAfterCompactionFailure = true;
-        return {
-          kind: "final",
-          payload: {
-            text: "⚠️ Context limit exceeded. I've reset our conversation to start fresh - please try again.\n\nTo prevent this, increase your compaction buffer by setting `agents.defaults.compaction.reserveTokensFloor` to 20000 or higher in your config.",
-          },
-        };
+        // Run memory consolidation pipeline before resetting the session.
+        // Pass 1 (before_reset hook) + Pass 2 (agentic consolidation turn)
+        // preserve memories before context is lost.
+        const activeEntry = params.getActiveSessionEntry();
+        try {
+          const { getGlobalHookRunner } = await import("../../plugins/hook-runner-global.js");
+          const hookRunner = getGlobalHookRunner();
+          if (hookRunner?.hasHooks("before_reset")) {
+            const sessionFile = activeEntry?.sessionFile;
+            const messages: unknown[] = [];
+            if (sessionFile) {
+              const content = fs.readFileSync(sessionFile, "utf-8");
+              for (const line of content.split("\n")) {
+                if (!line.trim()) continue;
+                try {
+                  const entry = JSON.parse(line);
+                  if (entry.type === "message" && entry.message) {
+                    messages.push(entry.message);
+                  }
+                } catch { /* skip malformed */ }
+              }
+            }
+            await hookRunner.runBeforeReset(
+              { sessionFile, messages, reason: "context_overflow" },
+              {
+                agentId: params.sessionKey?.split(":")[0] ?? "main",
+                sessionKey: params.sessionKey,
+                sessionId: activeEntry?.sessionId,
+                workspaceDir: params.followupRun.run.workspaceDir,
+              },
+            );
+          }
+        } catch (hookErr) {
+          logVerbose(`overflow auto-consolidation: before_reset hook failed: ${String(hookErr)}`);
+        }
+
+        try {
+          await runConsolidationTurn({
+            cfg: params.followupRun.run.config,
+            provider: fallbackProvider,
+            model: fallbackModel,
+            sessionEntry: activeEntry,
+            sessionKey: params.sessionKey,
+            agentId: params.followupRun.run.agentId,
+            agentDir: params.followupRun.run.agentDir,
+            workspaceDir: params.followupRun.run.workspaceDir,
+          });
+        } catch (consolErr) {
+          logVerbose(`overflow auto-consolidation: consolidation turn failed: ${String(consolErr)}`);
+        }
+
+        if (await params.resetSessionAfterCompactionFailure(embeddedError.message)) {
+          didResetAfterCompactionFailure = true;
+          return {
+            kind: "final",
+            payload: {
+              text: "💤 Context limit reached — memories consolidated and session reset. Please continue.",
+            },
+          };
+        }
       }
       if (embeddedError?.kind === "role_ordering") {
         const didReset = await params.resetSessionAfterRoleOrderingConflict(embeddedError.message);

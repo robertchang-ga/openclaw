@@ -794,10 +794,9 @@ export async function runEmbeddedPiAgent(
             return {
               payloads: [
                 {
-                  text:
-                    "⚙️ Context limit reached — consolidating memories and starting fresh session. " +
-                    "Use /reset to trigger memory consolidation now, or switch to a larger-context model.",
-                  isError: true,
+                   text:
+                    "💤 Context limit reached — consolidating memories and resetting session.",
+                   isError: true,
                 },
               ],
               meta: {

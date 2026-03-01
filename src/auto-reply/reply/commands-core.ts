@@ -178,6 +178,20 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       previousSessionEntry: params.previousSessionEntry,
       workspaceDir: params.workspaceDir,
     });
+    // Send status message before the blocking consolidation pipeline
+    const channel = params.ctx.OriginatingChannel || (params.command.channel as string);
+    const to = params.ctx.OriginatingTo || params.command.from || params.command.to;
+    if (channel && to) {
+      await routeReply({
+        payload: { text: "💤 Consolidating memories, this may take a moment..." },
+        channel,
+        to,
+        sessionKey: params.sessionKey,
+        accountId: params.ctx.AccountId,
+        threadId: params.ctx.MessageThreadId,
+        cfg: params.cfg,
+      });
+    }
     // Run consolidation turn — agent writes episodic reflection + updates MEMORY.md
     // before the session is wiped. This is blocking (awaited) so memory is preserved.
     try {

@@ -26,7 +26,7 @@ Entity normalization only:
 Everything in `min`, plus:
 1. **Pronoun resolution** — replace ambiguous pronouns with concrete referents when clearly determinable
 2. **Narrative collapsing** — merge retry sequences into clean single narratives (e.g., "tried X, failed, tried X again, succeeded" → "tried X, initially failed, then succeeded")
-3. **Ambiguity preservation** — mark unclear spans with `[AMBIGUOUS: original text]`. **Never guess.**
+3. **Ambiguity preservation** — mark unclear spans with `[UNCLEAR: original text]`. **Never guess.**
 4. **Leave original text as-is** for anything you're unsure about
 
 ### Entity Lookup Table
@@ -73,7 +73,7 @@ The sleep cycle runs on three triggers:
 ### Key Principles
 - **Clean, don't summarize** — preserve the full conversation, just remove noise
 - **Significant tool outputs stay** — if the agent scraped, queried, or generated something, keep it
-- **Ambiguous spans are marked, never guessed** — `[AMBIGUOUS: original text]`
+- **Ambiguous spans are marked, never guessed** — `[UNCLEAR: original text]`
 - **Episodic reflections are autobiographical** — capture what happened, not just facts
 - **MEMORY.md is append-only** — never overwrite existing entries
 
