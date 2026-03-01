@@ -533,8 +533,8 @@ const memoryCogneePlugin = {
                     },
                     searchType: {
                         type: "string",
-                        description: "Search strategy. Options: TEMPORAL (time-aware, default), GRAPH_COMPLETION (LLM-powered with graph context), RAG_COMPLETION (LLM answer from chunks), CHUNKS (fast raw text), SUMMARIES (hierarchical summaries), FEELING_LUCKY (auto-select best)",
-                        enum: ["TEMPORAL", "GRAPH_COMPLETION", "RAG_COMPLETION", "CHUNKS", "SUMMARIES", "FEELING_LUCKY"],
+                        description: "Search strategy. GRAPH_COMPLETION (default, LLM + graph context), TEMPORAL (time-aware), CHUNKS (fast vector), CHUNKS_LEXICAL (keyword matching), SUMMARIES (hierarchical), RAG_COMPLETION (classic RAG), GRAPH_SUMMARY_COMPLETION (graph + summarization), GRAPH_COMPLETION_COT (chain-of-thought), GRAPH_COMPLETION_CONTEXT_EXTENSION (broader context), TRIPLET_COMPLETION (subject-predicate-object), NATURAL_LANGUAGE (NL graph search), CYPHER (raw graph query), FEELING_LUCKY (auto-select), CODING_RULES (code rules)",
+                        enum: ["GRAPH_COMPLETION", "TEMPORAL", "CHUNKS", "CHUNKS_LEXICAL", "SUMMARIES", "RAG_COMPLETION", "GRAPH_SUMMARY_COMPLETION", "GRAPH_COMPLETION_COT", "GRAPH_COMPLETION_CONTEXT_EXTENSION", "TRIPLET_COMPLETION", "NATURAL_LANGUAGE", "CYPHER", "FEELING_LUCKY", "CODING_RULES"],
                     },
                 },
                 required: ["query"],
