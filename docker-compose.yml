@@ -53,6 +53,7 @@ services:
     environment:
       - LLM_API_KEY=${LLM_API_KEY}
       - GEMINI_API_KEY=${LLM_API_KEY}
+      - GOOGLE_API_KEY=${LLM_API_KEY}
       # Graphiti-core reads OPENAI_API_KEY for its LLM calls
       - OPENAI_API_KEY=${LLM_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}

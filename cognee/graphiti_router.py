@@ -5,9 +5,10 @@ Exposes build_graph_with_temporal_awareness and index_and_transform_graphiti_nod
 via a REST endpoint so the OpenClaw plugin can trigger the Graphiti pipeline after cognify.
 """
 import logging
+import os
 import re
+from datetime import datetime
 from typing import Optional
-from uuid import UUID
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -38,6 +39,45 @@ class GraphitiCognifyResponse(BaseModel):
     episodes_added: int = 0
 
 
+def _resolve_graphiti_llm_config():
+    """
+    Build a Graphiti LLMConfig based on environment variables.
+
+    Supports:
+      - LLM_PROVIDER=gemini  -> uses GOOGLE_API_KEY or GEMINI_API_KEY or LLM_API_KEY
+      - LLM_PROVIDER=openai  -> uses OPENAI_API_KEY or LLM_API_KEY
+      - Other providers       -> uses OPENAI_API_KEY or LLM_API_KEY (OpenAI-compatible)
+    """
+    from graphiti_core.llm_client import LLMConfig
+
+    provider = os.getenv("LLM_PROVIDER", "openai").lower().strip()
+    llm_model = os.getenv("LLM_MODEL", "")
+
+    if provider == "gemini":
+        api_key = (
+            os.getenv("GOOGLE_API_KEY")
+            or os.getenv("GEMINI_API_KEY")
+            or os.getenv("LLM_API_KEY", "")
+        )
+        # Use Gemini's OpenAI-compatible endpoint
+        return LLMConfig(
+            api_key=api_key,
+            model=llm_model or "gemini-2.0-flash",
+            small_model=llm_model or "gemini-2.0-flash",
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+    else:
+        api_key = (
+            os.getenv("OPENAI_API_KEY")
+            or os.getenv("LLM_API_KEY", "")
+        )
+        return LLMConfig(
+            api_key=api_key,
+            model=llm_model or "gpt-4o-mini",
+            small_model=llm_model or "gpt-4o-mini",
+        )
+
+
 def get_graphiti_router() -> APIRouter:
     router = APIRouter()
 
@@ -48,21 +88,20 @@ def get_graphiti_router() -> APIRouter:
 
         This endpoint:
         1. Retrieves text data from Cognee's data store
-        2. Feeds it through Graphiti's build_graph_with_temporal_awareness()
-        3. Bridges the resulting nodes into Cognee's vector store via
-           index_and_transform_graphiti_nodes_and_edges()
+        2. Creates a Graphiti instance with the correct LLM provider
+        3. Feeds data through Graphiti's add_episode() for temporal extraction
+        4. Bridges the resulting nodes into Cognee's vector store
         """
         try:
             from cognee.modules.users.methods import get_default_user
             from cognee.modules.data.methods import get_datasets, get_datasets_by_name
             from cognee.modules.data.methods.get_dataset_data import get_dataset_data
-            from cognee.tasks.temporal_awareness.build_graph_with_temporal_awareness import (
-                build_graph_with_temporal_awareness,
-            )
             from cognee.tasks.temporal_awareness.index_graphiti_objects import (
                 index_and_transform_graphiti_nodes_and_edges,
             )
-            from cognee.tasks.documents import classify_documents, extract_chunks_from_documents
+            from graphiti_core import Graphiti
+            from graphiti_core.llm_client import OpenAIClient
+            from graphiti_core.nodes import EpisodeType
 
             user = await get_default_user()
 
@@ -105,10 +144,30 @@ def get_graphiti_router() -> APIRouter:
 
             logger.info(f"Building Graphiti graph with {len(all_texts)} text segments")
 
-            # Step 1: Build the Graphiti temporal graph
-            graphiti = await build_graph_with_temporal_awareness(all_texts)
+            # Build Graphiti with provider-aware LLM config
+            url = os.getenv("GRAPH_DATABASE_URL", "bolt://neo4j:7687")
+            username = os.getenv("GRAPH_DATABASE_USERNAME", "neo4j")
+            password = os.getenv("GRAPH_DATABASE_PASSWORD", "")
 
-            # Step 2: Bridge Graphiti nodes into Cognee's vector store
+            llm_config = _resolve_graphiti_llm_config()
+            llm_client = OpenAIClient(llm_config)
+            graphiti = Graphiti(url, username, password, llm_client=llm_client)
+
+            await graphiti.build_indices_and_constraints()
+            logger.info("Graph database initialized")
+
+            # Add episodes
+            for i, text in enumerate(all_texts):
+                await graphiti.add_episode(
+                    name=f"episode_{i}",
+                    episode_body=text,
+                    source=EpisodeType.text,
+                    source_description="openclaw-memory",
+                    reference_time=datetime.now(),
+                )
+                logger.info(f"Added episode {i}: {text[:50]}...")
+
+            # Bridge Graphiti nodes into Cognee's vector store
             logger.info("Indexing Graphiti objects into Cognee vector store")
             await index_and_transform_graphiti_nodes_and_edges()
 
@@ -139,16 +198,17 @@ def get_graphiti_router() -> APIRouter:
         """Check if Graphiti dependencies are available."""
         try:
             import graphiti_core
-            import os
 
             graph_url = os.getenv("GRAPH_DATABASE_URL", "not set")
             has_password = bool(os.getenv("GRAPH_DATABASE_PASSWORD"))
+            llm_provider = os.getenv("LLM_PROVIDER", "openai")
 
             return {
                 "available": True,
                 "graphiti_core_version": getattr(graphiti_core, "__version__", "unknown"),
                 "graph_database_url": graph_url,
                 "graph_database_password_set": has_password,
+                "llm_provider": llm_provider,
             }
         except ImportError:
             return {
