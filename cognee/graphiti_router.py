@@ -59,11 +59,16 @@ def _resolve_graphiti_llm_config():
             or os.getenv("GEMINI_API_KEY")
             or os.getenv("LLM_API_KEY", "")
         )
+        # Use GRAPHITI_MODEL override, or LLM_MODEL if it's a Gemini model, else default
+        gemini_model = os.getenv("GRAPHITI_MODEL", "")
+        if not gemini_model:
+            gemini_model = llm_model if llm_model.startswith("gemini") else ""
+        gemini_model = gemini_model or "gemini-2.0-flash"
         # Use Gemini's OpenAI-compatible endpoint
         return LLMConfig(
             api_key=api_key,
-            model=llm_model or "gemini-2.0-flash",
-            small_model=llm_model or "gemini-2.0-flash",
+            model=gemini_model,
+            small_model=gemini_model,
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         )
     else:
