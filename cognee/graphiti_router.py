@@ -5,6 +5,7 @@ Exposes build_graph_with_temporal_awareness and index_and_transform_graphiti_nod
 via a REST endpoint so the OpenClaw plugin can trigger the Graphiti pipeline after cognify.
 """
 import logging
+import re
 from typing import Optional
 from uuid import UUID
 
@@ -12,6 +13,15 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("graphiti_router")
+
+# Strip YAML frontmatter (---...---) from text before feeding to Graphiti.
+# Frontmatter contains metadata (type, date, participants) intended for Cognee,
+# not temporal event extraction. Including it creates noisy temporal nodes.
+_FRONTMATTER_RE = re.compile(r"\A---\s*\n.*?\n---\s*\n", re.DOTALL)
+
+def strip_frontmatter(text: str) -> str:
+    """Remove YAML frontmatter block from the beginning of text."""
+    return _FRONTMATTER_RE.sub("", text)
 
 
 class GraphitiCognifyRequest(BaseModel):
@@ -77,9 +87,9 @@ def get_graphiti_router() -> APIRouter:
                     for doc in data_documents:
                         # Extract text content from document
                         if hasattr(doc, 'raw_data') and doc.raw_data:
-                            all_texts.append(str(doc.raw_data))
+                            all_texts.append(strip_frontmatter(str(doc.raw_data)))
                         elif hasattr(doc, 'content') and doc.content:
-                            all_texts.append(str(doc.content))
+                            all_texts.append(strip_frontmatter(str(doc.content)))
                         elif hasattr(doc, 'name') and doc.name:
                             all_texts.append(doc.name)
                 except Exception as e:
@@ -98,12 +108,12 @@ def get_graphiti_router() -> APIRouter:
             # Step 1: Build the Graphiti temporal graph
             graphiti = await build_graph_with_temporal_awareness(all_texts)
 
-            # Close the Graphiti connection
-            await graphiti.close()
-
             # Step 2: Bridge Graphiti nodes into Cognee's vector store
             logger.info("Indexing Graphiti objects into Cognee vector store")
             await index_and_transform_graphiti_nodes_and_edges()
+
+            # Close the Graphiti connection after indexing is complete
+            await graphiti.close()
 
             return GraphitiCognifyResponse(
                 success=True,
