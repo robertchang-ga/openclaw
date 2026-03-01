@@ -270,7 +270,7 @@ function processEntry(entry) {
   if (!text && role !== "assistant") return null;
 
   // Format with speaker labels and timestamp
-  const speaker = role === "user" ? "**User**" : "**Agent**";
+  const speaker = role === "user" ? "[User]" : "[Agent]";
   const ts = entry.timestamp || entry.createdAt;
   const timeLabel = ts ? formatEntryTime(ts) : "";
 
@@ -326,6 +326,8 @@ function generateSessionMeta(entries) {
   const startDate = new Date(startTime);
   const endDate = new Date(endTime);
 
+  // sessionId may live on the "session" type entry (which is in SKIP_TYPES),
+  // so we search all raw entries, not just filtered ones.
   const sessionId = entries.find((e) => e.sessionId)?.sessionId || "unknown";
 
   const formatTime = (d) => {
