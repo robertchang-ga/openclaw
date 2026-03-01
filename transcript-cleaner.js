@@ -354,6 +354,54 @@ function generateSessionMeta(entries) {
 }
 
 /**
+ * Collapse consecutive duplicate messages from the same speaker.
+ * E.g., 5× "[HH:MM UTC] [User]: Hey hey!" → single "[HH:MM UTC] [User]: Hey hey! (×5, until HH:MM UTC)"
+ */
+function collapseConsecutiveDuplicates(fragments) {
+  if (fragments.length <= 1) return fragments;
+
+  // Regex to parse "[HH:MM UTC] [Speaker]: text" lines
+  const lineRe = /^\[(\d{2}:\d{2}) UTC\] (\[[^\]]+\]): (.+)$/s;
+
+  const result = [];
+  let i = 0;
+  while (i < fragments.length) {
+    const match = fragments[i].match(lineRe);
+    if (!match) {
+      result.push(fragments[i]);
+      i++;
+      continue;
+    }
+    const [, firstTime, speaker, text] = match;
+    const normalizedText = text.trim().toLowerCase();
+    let lastTime = firstTime;
+    let count = 1;
+
+    // Look ahead for consecutive duplicates
+    while (i + count < fragments.length) {
+      const nextMatch = fragments[i + count].match(lineRe);
+      if (!nextMatch) break;
+      const [, nextTime, nextSpeaker, nextText] = nextMatch;
+      if (nextSpeaker !== speaker || nextText.trim().toLowerCase() !== normalizedText) break;
+      lastTime = nextTime;
+      count++;
+    }
+
+    if (count >= 3) {
+      // Collapse 3+ consecutive duplicates
+      result.push(`[${firstTime} UTC] ${speaker}: ${text.trim()} (×${count}, until ${lastTime} UTC)`);
+    } else {
+      // Keep 1-2 as-is
+      for (let j = 0; j < count; j++) {
+        result.push(fragments[i + j]);
+      }
+    }
+    i += count;
+  }
+  return result;
+}
+
+/**
  * Run Pass 1: deterministic cleaning.
  * Returns a clean markdown string.
  */
@@ -389,7 +437,10 @@ async function pass1(filePath) {
     "---",
   ].join("\n");
 
-  const markdown = frontmatter + "\n" + fragments.join("\n");
+  // Collapse consecutive duplicate messages from the same speaker
+  const collapsed = collapseConsecutiveDuplicates(fragments);
+
+  const markdown = frontmatter + "\n" + collapsed.join("\n");
 
   return {
     markdown,
