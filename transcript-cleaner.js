@@ -86,7 +86,7 @@ function formatEntryTime(ts) {
     if (isNaN(d.getTime())) return "";
     const h = d.getUTCHours().toString().padStart(2, "0");
     const m = d.getUTCMinutes().toString().padStart(2, "0");
-    return ` [${h}:${m} UTC]`;
+    return `[${h}:${m} UTC] `;
   } catch {
     return "";
   }
@@ -299,8 +299,8 @@ function processEntry(entry) {
     return `\n> **Tool result** (\`${toolName}\`):\n> ${resultText.split("\n").join("\n> ")}\n`;
   }
 
-  // Build the output
-  let output = `\n${speaker}${timeLabel}: ${text}`;
+  // Build the output — [HH:MM UTC] [Speaker]: text
+  let output = `\n${timeLabel}${speaker}: ${text}`;
   if (toolCalls.length > 0) {
     output += "\n" + toolCalls.join("\n");
   }
