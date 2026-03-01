@@ -6,11 +6,16 @@
 
 set -euo pipefail
 
-BRANCH="${1:-feat/security-proxy}"
+BRANCH=""
 FULL=false
 for arg in "$@"; do
-  [ "$arg" = "--full" ] && FULL=true
+  case "$arg" in
+    --full) FULL=true ;;
+    -*) echo "Unknown flag: $arg"; exit 1 ;;
+    *) BRANCH="$arg" ;;
+  esac
 done
+BRANCH="${BRANCH:-feat/security-proxy}"
 
 # Guard against infinite re-exec loop (set by the re-exec block below).
 RERAN="${_OPENCLAW_UPDATE_RERAN:-}"
