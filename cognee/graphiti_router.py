@@ -163,10 +163,34 @@ def get_graphiti_router() -> APIRouter:
             # instead of /responses which Google's API doesn't support)
             if provider_type == "gemini":
                 from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
+                from graphiti_core.embedder import OpenAIEmbedder, OpenAIEmbedderConfig
                 llm_client = OpenAIGenericClient(llm_config)
+                # Configure embedder — use same EMBEDDING_* env vars as Cognee
+                embedding_provider = os.getenv("EMBEDDING_PROVIDER", "openai").lower().strip()
+                embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-004")
+                if embedding_provider in ("gemini", "google"):
+                    embedder = OpenAIEmbedder(OpenAIEmbedderConfig(
+                        api_key=llm_config.api_key,
+                        embedding_model=embedding_model,
+                        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                    ))
+                    logger.info(f"Using Gemini embedder ({embedding_model})")
+                else:
+                    # Embedding provider is OpenAI — use separate OPENAI_API_KEY if available
+                    embed_api_key = os.getenv("OPENAI_API_KEY", llm_config.api_key)
+                    embedder = OpenAIEmbedder(OpenAIEmbedderConfig(
+                        api_key=embed_api_key,
+                        embedding_model=embedding_model,
+                    ))
+                    logger.info(f"Using OpenAI embedder ({embedding_model})")
             else:
                 llm_client = OpenAIClient(llm_config)
-            graphiti = Graphiti(url, username, password, llm_client=llm_client)
+                embedder = None  # Use default OpenAI embedder
+            graphiti = Graphiti(
+                url, username, password,
+                llm_client=llm_client,
+                **({"embedder": embedder} if embedder else {}),
+            )
 
             await graphiti.build_indices_and_constraints()
             logger.info("Graph database initialized")
