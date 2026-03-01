@@ -43,6 +43,8 @@ Everything in `min`, plus:
 
 The cleaned transcript MUST preserve the existing YAML frontmatter block (`---` ... `---`) exactly as-is. Only modify the body content below the frontmatter per the instructions above.
 
+**Per-turn timestamps MUST be preserved.** Both session and meeting transcripts include timestamps on every turn in the format `[HH:MM UTC] [Speaker]:`. These are critical for Graphiti temporal awareness and must never be removed or modified during Pass 2.
+
 ## Sleep Cycle Architecture
 
 The sleep cycle runs on three triggers:
@@ -53,7 +55,9 @@ The sleep cycle runs on three triggers:
 ### Steps (in order):
 1. **Pass 1 — Deterministic** (`before_reset` hook, blocking):
    - Session transcript cleansing via `transcript-cleaner.js` → `.staging/sessions/`
-   - Fireflies meeting transcript frontmattering via `cleanseFirefliesTranscripts` → `.staging/meetings/`
+     - Per-turn timestamps: `[HH:MM UTC] [User]:` / `[HH:MM UTC] [Agent]:`
+   - Fireflies meeting transcript cleansing via `cleanseFirefliesTranscripts` → `.staging/meetings/`
+     - Relative offsets converted to absolute UTC: `[HH:MM UTC] [Speaker Name]:`
 2. **Pass 2 — Agentic** (consolidation turn in `commands-core.ts`, blocking):
    - LLM cleaning on staged session transcripts (this skill) → `memory/cleansed-sessions/`
    - LLM cleaning on staged Fireflies transcripts → `memory/bpc_meetings/`
@@ -74,6 +78,7 @@ The sleep cycle runs on three triggers:
 
 ### Key Principles
 - **Clean, don't summarize** — preserve the full conversation, just remove noise
+- **Preserve timestamps** — per-turn `[HH:MM UTC]` timestamps are critical for temporal awareness, never remove them
 - **Significant tool outputs stay** — if the agent scraped, queried, or generated something, keep it
 - **Ambiguous spans are marked, never guessed** — `[UNCLEAR: original text]`
 - **Episodic reflections are autobiographical** — capture what happened, not just facts
