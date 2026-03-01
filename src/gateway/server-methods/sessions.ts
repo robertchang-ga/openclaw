@@ -204,6 +204,165 @@ async function ensureSessionRuntimeCleanup(params: {
   );
 }
 
+/**
+ * Consolidate a single session: Pass 1 (before_reset hook) + Pass 2 (LLM turn) + session reset.
+ * Extracted for reuse by the `--all` iteration and single-session paths.
+ */
+async function consolidateSingleSession(
+  cfg: ReturnType<typeof loadConfig>,
+  key: string,
+): Promise<{ pass1Messages: number; pass2Ok: boolean; newSessionId?: string }> {
+  const { target, storePath } = resolveGatewaySessionTargetFromKey(key);
+  const { entry } = loadSessionEntry(key);
+  if (!entry?.sessionId) {
+    logVerbose(`session.consolidate: no active session for key=${key}, skipping`);
+    return { pass1Messages: 0, pass2Ok: false };
+  }
+
+  const agentId = resolveDefaultAgentId(cfg);
+  const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
+
+  logVerbose(`session.consolidate: starting for key=${key} sessionId=${entry.sessionId}`);
+
+  // ── Pass 1: before_reset plugin hook (deterministic transcript cleansing) ──
+  let pass1Messages = 0;
+  const hookRunner = getGlobalHookRunner();
+  if (hookRunner?.hasHooks("before_reset")) {
+    const sessionFile = entry.sessionFile;
+    const messages: unknown[] = [];
+    if (sessionFile) {
+      try {
+        const content = await fsPromises.readFile(sessionFile, "utf-8");
+        for (const line of content.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.type === "message" && parsed.message) {
+              messages.push(parsed.message);
+            }
+          } catch {
+            // skip malformed lines
+          }
+        }
+      } catch {
+        logVerbose("session.consolidate: could not read session file for before_reset");
+      }
+    }
+    try {
+      await hookRunner.runBeforeReset(
+        { sessionFile, messages, reason: "reset" },
+        {
+          agentId,
+          sessionKey: key,
+          sessionId: entry.sessionId,
+          workspaceDir,
+        },
+      );
+      pass1Messages = messages.length;
+      logVerbose(`session.consolidate: Pass 1 complete (${messages.length} messages)`);
+    } catch (err) {
+      logVerbose(`session.consolidate: before_reset hook failed: ${String(err)}`);
+    }
+  } else {
+    logVerbose("session.consolidate: no before_reset hooks registered, skipping Pass 1");
+  }
+
+  // ── Pass 2: agentic LLM consolidation turn ──
+  let pass2Ok = false;
+  try {
+    const { provider, model } = resolveSessionModelRef(cfg, entry, agentId);
+    const { runConsolidationTurn } = await import(
+      "../../auto-reply/reply/agent-runner-consolidation.js"
+    );
+    await runConsolidationTurn({
+      cfg,
+      provider,
+      model,
+      sessionEntry: entry,
+      previousSessionEntry: entry,
+      sessionKey: key,
+      agentId,
+      workspaceDir,
+    });
+    pass2Ok = true;
+    logVerbose("session.consolidate: Pass 2 complete");
+  } catch (err) {
+    logVerbose(`session.consolidate: consolidation turn failed: ${String(err)}`);
+  }
+
+  // ── Session reset (archive transcript + wipe) ──
+  const hookEvent = createInternalHookEvent(
+    "command",
+    "reset",
+    target.canonicalKey ?? key,
+    {
+      sessionEntry: entry,
+      previousSessionEntry: entry,
+      commandSource: "cli:session.consolidate",
+      cfg,
+    },
+  );
+  await triggerInternalHook(hookEvent);
+
+  await ensureSessionRuntimeCleanup({
+    cfg,
+    key,
+    target,
+    sessionId: entry.sessionId,
+  });
+
+  let oldSessionId: string | undefined;
+  let oldSessionFile: string | undefined;
+  const next = await updateSessionStore(storePath, (store) => {
+    const { primaryKey } = migrateAndPruneSessionStoreKey({ cfg, key, store });
+    const storeEntry = store[primaryKey];
+    oldSessionId = storeEntry?.sessionId;
+    oldSessionFile = storeEntry?.sessionFile;
+    const now = Date.now();
+    const nextEntry: SessionEntry = {
+      sessionId: randomUUID(),
+      updatedAt: now,
+      systemSent: false,
+      abortedLastRun: false,
+      thinkingLevel: storeEntry?.thinkingLevel,
+      verboseLevel: storeEntry?.verboseLevel,
+      reasoningLevel: storeEntry?.reasoningLevel,
+      responseUsage: storeEntry?.responseUsage,
+      model: storeEntry?.model,
+      modelProvider: storeEntry?.modelProvider,
+      contextTokens: storeEntry?.contextTokens,
+      sendPolicy: storeEntry?.sendPolicy,
+      label: storeEntry?.label,
+      origin: snapshotSessionOrigin(storeEntry),
+      lastChannel: storeEntry?.lastChannel,
+      lastTo: storeEntry?.lastTo,
+      skillsSnapshot: storeEntry?.skillsSnapshot,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      totalTokensFresh: true,
+    };
+    store[primaryKey] = nextEntry;
+    return nextEntry;
+  });
+
+  archiveSessionTranscriptsForSession({
+    sessionId: oldSessionId,
+    storePath,
+    sessionFile: oldSessionFile,
+    agentId: target.agentId,
+    reason: "reset",
+  });
+
+  await emitSessionUnboundLifecycleEvent({
+    targetSessionKey: target.canonicalKey ?? key,
+    reason: "session-reset",
+  });
+
+  logVerbose(`session.consolidate: session ${key} reset complete`);
+  return { pass1Messages, pass2Ok, newSessionId: next.sessionId };
+}
+
 export const sessionsHandlers: GatewayRequestHandlers = {
   "sessions.list": ({ params, respond }) => {
     if (!assertValidParams(params, validateSessionsListParams, "sessions.list", respond)) {
@@ -591,191 +750,64 @@ export const sessionsHandlers: GatewayRequestHandlers = {
    * Full memory consolidation pipeline + session reset.
    * Designed for CLI/cron invocation (no chat channel context needed).
    *
+   * Supports `all: true` to consolidate every session updated in the last 24h,
+   * or a single session via `key` (defaults to main session).
+   *
    * 1. Fires the `before_reset` plugin hook (Pass 1: deterministic transcript cleansing)
    * 2. Runs the consolidation agent turn (Pass 2: LLM cleaning + episodic reflection)
    * 3. Archives the session transcript and resets the session
    */
   "session.consolidate": async ({ params, respond }) => {
     const cfg = loadConfig();
-    // Resolve which session to consolidate — default to main session
-    const rawKey =
-      typeof params.key === "string" ? params.key.trim() : undefined;
-    const key = rawKey || resolveMainSessionKey(cfg);
-    if (!key) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "no session key available"),
-      );
-      return;
-    }
-    const { target, storePath } = resolveGatewaySessionTargetFromKey(key);
-    const { entry } = loadSessionEntry(key);
-    if (!entry?.sessionId) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, `no active session for key: ${key}`),
-      );
-      return;
-    }
+    const consolidateAll = params.all === true;
 
-    const agentId = resolveDefaultAgentId(cfg);
-    const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
+    if (consolidateAll) {
+      // ── Consolidate all sessions updated in the last 24 hours ──
+      const { store } = loadCombinedSessionStoreForGateway(cfg);
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const activeKeys = Object.entries(store)
+        .filter(
+          ([, entry]) =>
+            entry?.sessionId && (entry.updatedAt ?? 0) > cutoff,
+        )
+        .map(([key]) => key);
 
-    logVerbose(`session.consolidate: starting for key=${key} sessionId=${entry.sessionId}`);
+      if (activeKeys.length === 0) {
+        respond(true, { ok: true, sessions: [], message: "No active sessions to consolidate" }, undefined);
+        return;
+      }
 
-    // ── Pass 1: before_reset plugin hook (deterministic transcript cleansing) ──
-    let pass1Messages = 0;
-    const hookRunner = getGlobalHookRunner();
-    if (hookRunner?.hasHooks("before_reset")) {
-      const sessionFile = entry.sessionFile;
-      const messages: unknown[] = [];
-      if (sessionFile) {
+      logVerbose(`session.consolidate: --all: found ${activeKeys.length} active session(s)`);
+      const results: Array<{ key: string; pass1Messages: number; pass2Ok: boolean; error?: string }> = [];
+
+      for (const sessionKey of activeKeys) {
         try {
-          const content = await fsPromises.readFile(sessionFile, "utf-8");
-          for (const line of content.split("\n")) {
-            if (!line.trim()) continue;
-            try {
-              const parsed = JSON.parse(line);
-              if (parsed.type === "message" && parsed.message) {
-                messages.push(parsed.message);
-              }
-            } catch {
-              // skip malformed lines
-            }
-          }
-        } catch {
-          logVerbose("session.consolidate: could not read session file for before_reset");
+          logVerbose(`session.consolidate: processing ${sessionKey}`);
+          const result = await consolidateSingleSession(cfg, sessionKey);
+          results.push({ key: sessionKey, ...result });
+        } catch (err) {
+          logVerbose(`session.consolidate: failed for ${sessionKey}: ${String(err)}`);
+          results.push({ key: sessionKey, pass1Messages: 0, pass2Ok: false, error: String(err) });
         }
       }
-      try {
-        await hookRunner.runBeforeReset(
-          { sessionFile, messages, reason: "reset" },
-          {
-            agentId,
-            sessionKey: key,
-            sessionId: entry.sessionId,
-            workspaceDir,
-          },
-        );
-        pass1Messages = messages.length;
-        logVerbose(`session.consolidate: Pass 1 complete (${messages.length} messages)`);
-      } catch (err) {
-        logVerbose(`session.consolidate: before_reset hook failed: ${String(err)}`);
-      }
-    } else {
-      logVerbose("session.consolidate: no before_reset hooks registered, skipping Pass 1");
-    }
 
-    // ── Pass 2: agentic LLM consolidation turn ──
-    let pass2Ok = false;
-    try {
-      const { provider, model } = resolveSessionModelRef(cfg, entry, agentId);
-      const { runConsolidationTurn } = await import(
-        "../../auto-reply/reply/agent-runner-consolidation.js"
-      );
-      await runConsolidationTurn({
-        cfg,
-        provider,
-        model,
-        sessionEntry: entry,
-        previousSessionEntry: entry,
-        sessionKey: key,
-        agentId,
-        workspaceDir,
-      });
-      pass2Ok = true;
-      logVerbose("session.consolidate: Pass 2 complete");
-    } catch (err) {
-      logVerbose(`session.consolidate: consolidation turn failed: ${String(err)}`);
-    }
-
-    // ── Session reset (archive transcript + wipe) ──
-    const hookEvent = createInternalHookEvent(
-      "command",
-      "reset",
-      target.canonicalKey ?? key,
-      {
-        sessionEntry: entry,
-        previousSessionEntry: entry,
-        commandSource: "cli:session.consolidate",
-        cfg,
-      },
-    );
-    await triggerInternalHook(hookEvent);
-
-    const cleanupError = await ensureSessionRuntimeCleanup({
-      cfg,
-      key,
-      target,
-      sessionId: entry.sessionId,
-    });
-    if (cleanupError) {
-      // Still report partial success — Pass 1/2 ran even if cleanup fails
-      respond(false, { pass1Messages, pass2Ok }, cleanupError);
+      respond(true, { ok: true, sessions: results }, undefined);
       return;
     }
 
-    let oldSessionId: string | undefined;
-    let oldSessionFile: string | undefined;
-    const next = await updateSessionStore(storePath, (store) => {
-      const { primaryKey } = migrateAndPruneSessionStoreKey({ cfg, key, store });
-      const storeEntry = store[primaryKey];
-      oldSessionId = storeEntry?.sessionId;
-      oldSessionFile = storeEntry?.sessionFile;
-      const now = Date.now();
-      const nextEntry: SessionEntry = {
-        sessionId: randomUUID(),
-        updatedAt: now,
-        systemSent: false,
-        abortedLastRun: false,
-        thinkingLevel: storeEntry?.thinkingLevel,
-        verboseLevel: storeEntry?.verboseLevel,
-        reasoningLevel: storeEntry?.reasoningLevel,
-        responseUsage: storeEntry?.responseUsage,
-        model: storeEntry?.model,
-        modelProvider: storeEntry?.modelProvider,
-        contextTokens: storeEntry?.contextTokens,
-        sendPolicy: storeEntry?.sendPolicy,
-        label: storeEntry?.label,
-        origin: snapshotSessionOrigin(storeEntry),
-        lastChannel: storeEntry?.lastChannel,
-        lastTo: storeEntry?.lastTo,
-        skillsSnapshot: storeEntry?.skillsSnapshot,
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        totalTokensFresh: true,
-      };
-      store[primaryKey] = nextEntry;
-      return nextEntry;
-    });
+    // ── Single session consolidation ──
+    const rawKey = typeof params.key === "string" ? params.key.trim() : undefined;
+    const key = rawKey || resolveMainSessionKey(cfg);
+    if (!key) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "no session key available"));
+      return;
+    }
 
-    archiveSessionTranscriptsForSession({
-      sessionId: oldSessionId,
-      storePath,
-      sessionFile: oldSessionFile,
-      agentId: target.agentId,
-      reason: "reset",
-    });
-
-    await emitSessionUnboundLifecycleEvent({
-      targetSessionKey: target.canonicalKey ?? key,
-      reason: "session-reset",
-    });
-
-    logVerbose("session.consolidate: session reset complete");
-    respond(
-      true,
-      {
-        ok: true,
-        key: target.canonicalKey,
-        pass1Messages,
-        pass2Ok,
-        newSessionId: next.sessionId,
-      },
-      undefined,
-    );
+    try {
+      const result = await consolidateSingleSession(cfg, key);
+      respond(true, { ok: true, key, ...result }, undefined);
+    } catch (err) {
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(err)));
+    }
   },
 };

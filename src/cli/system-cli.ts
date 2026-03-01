@@ -130,7 +130,7 @@ export function registerSystemCli(program: Command) {
     });
   });
 
-  type ConsolidateOpts = GatewayRpcOpts & { key?: string; json?: boolean };
+  type ConsolidateOpts = GatewayRpcOpts & { key?: string; all?: boolean; json?: boolean };
   addGatewayClientOptions(
     system
       .command("consolidate")
@@ -138,12 +138,16 @@ export function registerSystemCli(program: Command) {
         "Run the full memory consolidation pipeline (Pass 1 + Pass 2) then reset the session",
       )
       .option("--key <key>", "Session key to consolidate (defaults to main session)")
+      .option("--all", "Consolidate all sessions updated in the last 24 hours")
       .option("--json", "Output JSON", false)
       .option("--timeout <ms>", "Timeout in ms", "300000"), // 5 minutes default
   ).action(async (opts: ConsolidateOpts) => {
     const params: Record<string, unknown> = {};
     if (opts.key) {
       params.key = opts.key;
+    }
+    if (opts.all) {
+      params.all = true;
     }
     await runSystemGatewayCommand(
       opts,
