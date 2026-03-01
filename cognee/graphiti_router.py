@@ -168,6 +168,9 @@ def get_graphiti_router() -> APIRouter:
                 # Configure embedder — use same EMBEDDING_* env vars as Cognee
                 embedding_provider = os.getenv("EMBEDDING_PROVIDER", "openai").lower().strip()
                 embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-004")
+                # Strip litellm prefix (e.g., "gemini/gemini-embedding-001" → "gemini-embedding-001")
+                if embedding_model.startswith("gemini/"):
+                    embedding_model = embedding_model[len("gemini/"):]
                 if embedding_provider in ("gemini", "google"):
                     embedder = OpenAIEmbedder(OpenAIEmbedderConfig(
                         api_key=llm_config.api_key,
