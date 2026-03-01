@@ -151,6 +151,11 @@ def get_graphiti_router() -> APIRouter:
             password = os.getenv("GRAPH_DATABASE_PASSWORD", "")
 
             llm_config = _resolve_graphiti_llm_config()
+            logger.info(
+                f"Graphiti LLM config: model={llm_config.model}, "
+                f"base_url={llm_config.base_url}, "
+                f"api_key={'set' if llm_config.api_key else 'MISSING'}"
+            )
             llm_client = OpenAIClient(llm_config)
             graphiti = Graphiti(url, username, password, llm_client=llm_client)
 
@@ -188,10 +193,22 @@ def get_graphiti_router() -> APIRouter:
                 message=f"Graphiti dependencies not installed: {str(e)}",
             )
         except Exception as e:
-            logger.error(f"Graphiti cognify failed: {e}", exc_info=True)
+            # Extract detailed error info for OpenAI/LLM API errors
+            error_details = str(e)
+            if hasattr(e, 'response'):
+                try:
+                    resp = e.response
+                    error_details += f" | status={resp.status_code}"
+                    error_details += f" | body={resp.text[:500]}"
+                    error_details += f" | url={resp.url}"
+                except Exception:
+                    pass
+            if hasattr(e, 'body'):
+                error_details += f" | body={e.body}"
+            logger.error(f"Graphiti cognify failed: {error_details}", exc_info=True)
             return GraphitiCognifyResponse(
                 success=False,
-                message=f"Graphiti cognify failed: {str(e)}",
+                message=f"Graphiti cognify failed: {error_details}",
             )
 
     @router.get("/status")
@@ -203,6 +220,18 @@ def get_graphiti_router() -> APIRouter:
             graph_url = os.getenv("GRAPH_DATABASE_URL", "not set")
             has_password = bool(os.getenv("GRAPH_DATABASE_PASSWORD"))
             llm_provider = os.getenv("LLM_PROVIDER", "openai")
+            llm_model = os.getenv("LLM_MODEL", "")
+
+            # Show resolved config
+            try:
+                resolved = _resolve_graphiti_llm_config()
+                resolved_info = {
+                    "model": resolved.model,
+                    "base_url": resolved.base_url,
+                    "api_key_set": bool(resolved.api_key),
+                }
+            except Exception as cfg_err:
+                resolved_info = {"error": str(cfg_err)}
 
             return {
                 "available": True,
@@ -210,6 +239,8 @@ def get_graphiti_router() -> APIRouter:
                 "graph_database_url": graph_url,
                 "graph_database_password_set": has_password,
                 "llm_provider": llm_provider,
+                "llm_model": llm_model,
+                "resolved_config": resolved_info,
             }
         except ImportError:
             return {
