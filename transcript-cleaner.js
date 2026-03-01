@@ -74,6 +74,8 @@ const CONTENT_NOISE_PATTERNS = [
   /\[\w{3}\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+UTC\]\s*/g,
   // Message ID metadata lines
   /\[message_id:\s*[0-9a-f-]+\]\s*/gi,
+  // Raw JSON objects leaked into chat (e.g., web_search results)
+  /\{\s*"query"[\s\S]*?"results"\s*:\s*\[[\s\S]*?\]\s*\}/g,
 ];
 
 /** Tool names whose output is ephemeral (scaffolding, not significant). */
@@ -81,6 +83,7 @@ const EPHEMERAL_TOOLS = new Set([
   "read_file", "read", "view_file", "list_dir", "find_file", "cat", "ls", "pwd",
   "get_config", "check_config", "read_config",
   "which", "type", "where", "file",
+  "web_search", "web_fetch", "fetch", "search", "brave_search",
 ]);
 
 /**
