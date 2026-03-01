@@ -287,15 +287,6 @@ const entries: SubCliEntry[] = [
       mod.registerCompletionCli(program);
     },
   },
-  {
-    name: "cognee",
-    description: "Cognee memory tools (consolidation, indexing, search)",
-    hasSubcommands: true,
-    register: async (program) => {
-      const { registerPluginCliCommands } = await import("../../plugins/cli.js");
-      registerPluginCliCommands(program, await loadConfig());
-    },
-  },
 ];
 
 export function getSubCliEntries(): SubCliEntry[] {

@@ -766,6 +766,105 @@ const memoryCogneePlugin = {
                 ];
                 console.log(lines.join("\n"));
             });
+            // consolidate subcommand
+            cognee
+                .command("consolidate")
+                .description("Run memory consolidation on all unprocessed session transcripts.")
+                .action(async () => {
+                const cleanseIndexPath = join(homedir(), ".openclaw", "memory", "cognee", "cleanse-index.json");
+                let cleanseIndex = { entries: {} };
+                try {
+                    const raw = await fs.readFile(cleanseIndexPath, "utf-8");
+                    cleanseIndex = JSON.parse(raw);
+                } catch { /* first run */ }
+                // Find all session files across all agents
+                const agentsDir = join(homedir(), ".openclaw", "agents");
+                let sessionFiles = [];
+                try {
+                    const agentIds = await fs.readdir(agentsDir);
+                    for (const agentId of agentIds) {
+                        const sessionsDir = join(agentsDir, agentId, "sessions");
+                        try {
+                            const files = await fs.readdir(sessionsDir);
+                            const jsonlFiles = files
+                                .filter((f) => f.endsWith(".jsonl"))
+                                .map((f) => join(sessionsDir, f));
+                            sessionFiles.push(...jsonlFiles);
+                        } catch { /* agent may not have sessions */ }
+                    }
+                } catch {
+                    ctx.logger.warn?.("No agents directory found");
+                    return;
+                }
+                ctx.logger.info?.(`Found ${sessionFiles.length} session file(s)`);
+                let processed = 0;
+                for (const sessionFile of sessionFiles) {
+                    const filename = sessionFile.split(/[/\\]/).pop();
+                    try {
+                        const stat = await fs.stat(sessionFile);
+                        const existing = cleanseIndex.entries[filename];
+                        // Corruption check: validate fileSize + mtime
+                        if (existing &&
+                            existing.fileSize === stat.size &&
+                            existing.mtime === stat.mtimeMs) {
+                            continue; // Already processed and unchanged
+                        }
+                        const { cleanseTranscript } = await import("./transcript-cleaner.js");
+                        const result = await cleanseTranscript(sessionFile);
+                        if (result.outputPath) {
+                            // Update index
+                            cleanseIndex.entries[filename] = {
+                                sessionId: filename.replace(/\.jsonl$/, ""),
+                                fileSize: stat.size,
+                                mtime: stat.mtimeMs,
+                                cleansedAt: Date.now(),
+                                outputPath: result.outputPath,
+                            };
+                            processed++;
+                            ctx.logger.info?.(`Cleansed: ${filename} → ${result.outputPath}`);
+                        }
+                    } catch (err) {
+                        ctx.logger.warn?.(`Failed to process ${filename}: ${String(err)}`);
+                    }
+                }
+                // Save updated index
+                try {
+                    await fs.mkdir(dirname(cleanseIndexPath), { recursive: true });
+                    await fs.writeFile(cleanseIndexPath, JSON.stringify(cleanseIndex, null, 2), "utf-8");
+                } catch (err) {
+                    ctx.logger.warn?.(`Failed to save cleanse index: ${String(err)}`);
+                }
+                ctx.logger.info?.(`Consolidation complete: ${processed} session(s) processed`);
+                // Also process Fireflies meeting transcripts
+                await cleanseFirefliesTranscripts(ctx.logger);
+
+                // Sync all memory files to Cognee and rebuild the knowledge graph
+                ctx.logger.info?.("Syncing memory files and rebuilding knowledge graph...");
+                try {
+                    const workspaceDir = join(homedir(), ".openclaw", "workspace");
+                    const memoryFiles = await collectMemoryFiles(workspaceDir);
+                    if (memoryFiles.length > 0) {
+                        const syncIndexPath = join(homedir(), ".openclaw", "memory", "cognee", "sync-index.json");
+                        let localSyncIndex = { files: {} };
+                        try {
+                            localSyncIndex = JSON.parse(await fs.readFile(syncIndexPath, "utf-8"));
+                        } catch { /* first sync */ }
+                        await syncFiles(client, memoryFiles, localSyncIndex, cfg, ctx.logger);
+                        // Persist updated sync index
+                        await fs.mkdir(dirname(syncIndexPath), { recursive: true });
+                        await fs.writeFile(syncIndexPath, JSON.stringify(localSyncIndex, null, 2), "utf-8");
+                    }
+                    await client.cognify();
+                    ctx.logger.info?.("Knowledge graph rebuilt successfully.");
+                } catch (err) {
+                    ctx.logger.warn?.(`Sync/cognify failed: ${String(err)}`);
+                }
+
+                ctx.logger.info?.(
+                    "Pass 2 (LLM cleaning) will run on next /reset or system event. " +
+                    "Staged files are in .staging/sessions/ and .staging/meetings/"
+                );
+            });
         }, { commands: ["cognee"] });
         // ------------------------------------------------------------------
         // Auto-sync on startup
@@ -951,109 +1050,7 @@ const memoryCogneePlugin = {
                 }
             });
         }
-        // ------------------------------------------------------------------
-        // CLI: openclaw cognee consolidate
-        // ------------------------------------------------------------------
-        api.registerCli(async (ctx) => {
-            const consolidate = ctx.program
-                .command("consolidate")
-                .description("Run memory consolidation on all unprocessed session transcripts.");
-            consolidate.action(async () => {
-                const cleanseIndexPath = join(homedir(), ".openclaw", "memory", "cognee", "cleanse-index.json");
-                let cleanseIndex = { entries: {} };
-                try {
-                    const raw = await fs.readFile(cleanseIndexPath, "utf-8");
-                    cleanseIndex = JSON.parse(raw);
-                } catch { /* first run */ }
-                // Find all session files across all agents
-                const agentsDir = join(homedir(), ".openclaw", "agents");
-                let sessionFiles = [];
-                try {
-                    const agentIds = await fs.readdir(agentsDir);
-                    for (const agentId of agentIds) {
-                        const sessionsDir = join(agentsDir, agentId, "sessions");
-                        try {
-                            const files = await fs.readdir(sessionsDir);
-                            const jsonlFiles = files
-                                .filter((f) => f.endsWith(".jsonl"))
-                                .map((f) => join(sessionsDir, f));
-                            sessionFiles.push(...jsonlFiles);
-                        } catch { /* agent may not have sessions */ }
-                    }
-                } catch {
-                    ctx.logger.warn?.("No agents directory found");
-                    return;
-                }
-                ctx.logger.info?.(`Found ${sessionFiles.length} session file(s)`);
-                let processed = 0;
-                for (const sessionFile of sessionFiles) {
-                    const filename = sessionFile.split(/[/\\]/).pop();
-                    try {
-                        const stat = await fs.stat(sessionFile);
-                        const existing = cleanseIndex.entries[filename];
-                        // Corruption check: validate fileSize + mtime
-                        if (existing &&
-                            existing.fileSize === stat.size &&
-                            existing.mtime === stat.mtimeMs) {
-                            continue; // Already processed and unchanged
-                        }
-                        const { cleanseTranscript } = await import("./transcript-cleaner.js");
-                        const result = await cleanseTranscript(sessionFile);
-                        if (result.outputPath) {
-                            // Update index
-                            cleanseIndex.entries[filename] = {
-                                sessionId: filename.replace(/\.jsonl$/, ""),
-                                fileSize: stat.size,
-                                mtime: stat.mtimeMs,
-                                cleansedAt: Date.now(),
-                                outputPath: result.outputPath,
-                            };
-                            processed++;
-                            ctx.logger.info?.(`Cleansed: ${filename} → ${result.outputPath}`);
-                        }
-                    } catch (err) {
-                        ctx.logger.warn?.(`Failed to process ${filename}: ${String(err)}`);
-                    }
-                }
-                // Save updated index
-                try {
-                    await fs.mkdir(dirname(cleanseIndexPath), { recursive: true });
-                    await fs.writeFile(cleanseIndexPath, JSON.stringify(cleanseIndex, null, 2), "utf-8");
-                } catch (err) {
-                    ctx.logger.warn?.(`Failed to save cleanse index: ${String(err)}`);
-                }
-                ctx.logger.info?.(`Consolidation complete: ${processed} session(s) processed`);
-                // Also process Fireflies meeting transcripts
-                await cleanseFirefliesTranscripts(ctx.logger);
 
-                // Sync all memory files to Cognee and rebuild the knowledge graph
-                ctx.logger.info?.("Syncing memory files and rebuilding knowledge graph...");
-                try {
-                    const workspaceDir = join(homedir(), ".openclaw", "workspace");
-                    const memoryFiles = await collectMemoryFiles(workspaceDir);
-                    if (memoryFiles.length > 0) {
-                        const syncIndexPath = join(homedir(), ".openclaw", "memory", "cognee", "sync-index.json");
-                        let syncIndex = { files: {} };
-                        try {
-                            syncIndex = JSON.parse(await fs.readFile(syncIndexPath, "utf-8"));
-                        } catch { /* first sync */ }
-                        await syncFiles(client, memoryFiles, syncIndex, cfg, ctx.logger);
-                        // Persist updated sync index
-                        await fs.mkdir(dirname(syncIndexPath), { recursive: true });
-                        await fs.writeFile(syncIndexPath, JSON.stringify(syncIndex, null, 2), "utf-8");
-                    }
-                    await client.cognify();
-                    ctx.logger.info?.("Knowledge graph rebuilt successfully.");
-                } catch (err) {
-                    ctx.logger.warn?.(`Sync/cognify failed: ${String(err)}`);
-                }
-
-                ctx.logger.info?.(
-                    "Pass 2 (LLM cleaning) will run on next /reset or system event. " +
-                    "Staged files are in .staging/sessions/ and .staging/meetings/"
-                );
-            });
-        }, { commands: ["consolidate"] });
         // ------------------------------------------------------------------
         // Fireflies meeting transcript cleaner
         // ------------------------------------------------------------------
