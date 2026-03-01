@@ -999,6 +999,33 @@ const memoryCogneePlugin = {
                 ctx.logger.info?.(`Consolidation complete: ${processed} session(s) processed`);
                 // Also process Fireflies meeting transcripts
                 await cleanseFirefliesTranscripts(ctx.logger);
+
+                // Sync all memory files to Cognee and rebuild the knowledge graph
+                ctx.logger.info?.("Syncing memory files and rebuilding knowledge graph...");
+                try {
+                    const workspaceDir = join(homedir(), ".openclaw", "workspace");
+                    const memoryFiles = await collectMemoryFiles(workspaceDir);
+                    if (memoryFiles.length > 0) {
+                        const syncIndexPath = join(homedir(), ".openclaw", "memory", "cognee", "sync-index.json");
+                        let syncIndex = { files: {} };
+                        try {
+                            syncIndex = JSON.parse(await fs.readFile(syncIndexPath, "utf-8"));
+                        } catch { /* first sync */ }
+                        await syncFiles(client, memoryFiles, syncIndex, cfg, ctx.logger);
+                        // Persist updated sync index
+                        await fs.mkdir(dirname(syncIndexPath), { recursive: true });
+                        await fs.writeFile(syncIndexPath, JSON.stringify(syncIndex, null, 2), "utf-8");
+                    }
+                    await client.cognify();
+                    ctx.logger.info?.("Knowledge graph rebuilt successfully.");
+                } catch (err) {
+                    ctx.logger.warn?.(`Sync/cognify failed: ${String(err)}`);
+                }
+
+                ctx.logger.info?.(
+                    "Pass 2 (LLM cleaning) will run on next /reset or system event. " +
+                    "Staged files are in .staging/sessions/ and .staging/meetings/"
+                );
             });
         }, { commands: ["consolidate"] });
         // ------------------------------------------------------------------
