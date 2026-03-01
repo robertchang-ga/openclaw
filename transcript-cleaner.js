@@ -305,7 +305,7 @@ function processEntry(entry) {
   }
 
   // Build the output — [HH:MM UTC] [Speaker]: text
-  let output = `\n${timeLabel}${speaker}: ${text}`;
+  let output = `${timeLabel}${speaker}: ${text}`;
   if (toolCalls.length > 0) {
     output += "\n" + toolCalls.join("\n");
   }
