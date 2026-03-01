@@ -13,6 +13,8 @@ description: >-
 
 You will be invoked during the **memory consolidation sleep cycle** with a deterministically cleaned transcript (Pass 1 output). Your job is to perform **Pass 2 (LLM cleaning)**.
 
+You can also be invoked **manually** after running `openclaw cognee consolidate`. Staged files are in `~/.openclaw/workspace/.staging/` which contains `sessions/` and `meetings/` subdirectories. Pass 2 can process all staged files at once — it is not limited to a single session.
+
 ## Pass 2 Instructions
 
 ### Level: `min`
