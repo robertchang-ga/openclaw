@@ -172,10 +172,24 @@ function extractTextContent(message) {
   if (!message?.content) return "";
   if (typeof message.content === "string") return message.content;
   if (Array.isArray(message.content)) {
-    return message.content
-      .filter((part) => part.type === "text" && part.text)
-      .map((part) => part.text)
-      .join("\n");
+    const parts = [];
+    for (const part of message.content) {
+      if (part.type === "text" && part.text) {
+        parts.push(part.text);
+      } else if (part.type === "tool_result") {
+        // Tool result content may be a string or array of content blocks
+        if (typeof part.content === "string") {
+          parts.push(part.content);
+        } else if (Array.isArray(part.content)) {
+          for (const sub of part.content) {
+            if (sub.type === "text" && sub.text) parts.push(sub.text);
+          }
+        }
+      }
+      // tool_use / function_call / function_response parts are handled
+      // by processEntry's tool tracking logic, not here
+    }
+    return parts.join("\n");
   }
   return "";
 }

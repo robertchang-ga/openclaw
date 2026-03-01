@@ -106,6 +106,39 @@ describe("extractTextContent", () => {
   it("returns empty for message with no content field", () => {
     assert.strictEqual(extractTextContent({ role: "user" }), "");
   });
+
+  it("extracts tool_result with string content", () => {
+    const message = {
+      content: [
+        { type: "tool_result", content: "file contents here" },
+      ],
+    };
+    assert.strictEqual(extractTextContent(message), "file contents here");
+  });
+
+  it("extracts tool_result with nested array content", () => {
+    const message = {
+      content: [
+        {
+          type: "tool_result",
+          content: [
+            { type: "text", text: "result line 1" },
+            { type: "text", text: "result line 2" },
+          ],
+        },
+      ],
+    };
+    assert.strictEqual(extractTextContent(message), "result line 1\nresult line 2");
+  });
+
+  it("ignores tool_use parts (handled separately)", () => {
+    const message = {
+      content: [
+        { type: "tool_use", name: "write_file", input: {} },
+      ],
+    };
+    assert.strictEqual(extractTextContent(message), "");
+  });
 });
 
 // ---------------------------------------------------------------------------
