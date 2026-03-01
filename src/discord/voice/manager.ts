@@ -3,7 +3,13 @@ import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { ChannelType, type Client, ReadyListener, VoiceStateUpdateListener, VoiceServerUpdateListener } from "@buape/carbon";
+import {
+  ChannelType,
+  type Client,
+  ReadyListener,
+  VoiceStateUpdateListener,
+  VoiceServerUpdateListener,
+} from "@buape/carbon";
 import { type GatewayPlugin } from "@buape/carbon/gateway";
 import type { VoicePlugin } from "@buape/carbon/voice";
 import {
@@ -585,7 +591,9 @@ export class DiscordVoiceManager {
           const pending = entry.pendingTranscripts ?? [];
           entry.pendingTranscripts = [];
           entry.transcriptDebounceTimer = null;
-          if (pending.length === 0) return;
+          if (pending.length === 0) {
+            return;
+          }
 
           // Merge all pending transcripts into a single prompt.
           const mergedText = pending.map((p) => p.text).join(" ");
@@ -712,7 +720,7 @@ export class DiscordVoiceManager {
           entry.decryptFailureCount >= DECRYPT_FAILURE_RECONNECT_THRESHOLD &&
           !entry.decryptRecoveryInFlight
         ) {
-          this.recoverFromDecryptFailures(entry);
+          void this.recoverFromDecryptFailures(entry);
         }
       });
     }
@@ -791,9 +799,7 @@ export class DiscordVoiceManager {
         );
       }
     } catch (err) {
-      logger.warn(
-        `discord voice: rejoin recovery error: ${formatErrorMessage(err)}`,
-      );
+      logger.warn(`discord voice: rejoin recovery error: ${formatErrorMessage(err)}`);
     }
   }
 
@@ -826,7 +832,11 @@ export class DiscordVoiceManager {
   /**
    * Process a transcript received from the realtime STT WebSocket.
    */
-  private async processTranscript(params: { entry: VoiceSessionEntry; transcript: string; userId?: string }) {
+  private async processTranscript(params: {
+    entry: VoiceSessionEntry;
+    transcript: string;
+    userId?: string;
+  }) {
     const { entry, transcript, userId } = params;
     if (!transcript || transcript.length < 2) {
       return;
@@ -882,7 +892,9 @@ export class DiscordVoiceManager {
               );
               return bridge.play(guildId, wavBuf, sentenceNum);
             })
-            .catch((err) => logger.warn(`kokoro bridge playback failed: ${formatErrorMessage(err)}`));
+            .catch((err) =>
+              logger.warn(`kokoro bridge playback failed: ${formatErrorMessage(err)}`),
+            );
         } else {
           // Direct mode: play locally via AudioPlayer
           this.enqueuePlayback(entry, async () => {
@@ -930,14 +942,6 @@ export class DiscordVoiceManager {
           speakChunk(sentence);
         }
 
-        // Early-flush: if 40+ chars have accumulated without a sentence boundary,
-        // speak them immediately to reduce time-to-first-audio.
-        if (!flush && sentenceBuffer.trim().length >= 40) {
-          const earlyChunk = sentenceBuffer.trim();
-          sentenceBuffer = "";
-          speakChunk(earlyChunk);
-        }
-
         // On flush, speak whatever remains even if no sentence boundary.
         if (flush && sentenceBuffer.trim().length >= 2) {
           const remaining = sentenceBuffer.trim();
@@ -960,7 +964,9 @@ export class DiscordVoiceManager {
       });
 
       try {
-        logger.info(`agent command: sending prompt to agent ${entry.route.agentId} session=${entry.route.sessionKey}`);
+        logger.info(
+          `agent command: sending prompt to agent ${entry.route.agentId} session=${entry.route.sessionKey}`,
+        );
         const result = await agentCommand(
           {
             message: prompt,
@@ -972,13 +978,18 @@ export class DiscordVoiceManager {
             extraSystemPrompt:
               "You are in a live voice conversation. Reply with plain spoken text ONLY. " +
               "Do NOT use the tts tool — your text response will be converted to speech automatically. " +
-              "Keep responses VERY short — 1 to 2 sentences max. Do NOT use markdown, asterisks, or any formatting — this is spoken audio. " +
-              "When using cognee or memory tools, briefly acknowledge first (e.g. 'Let me think about that.').",
+              "Keep responses VERY short — 1 to 2 sentences max. Do NOT use markdown, asterisks, emojis, or any special characters — this is spoken audio. " +
+              "Always begin your reply with a short spoken acknowledgment clause ending in a comma or period " +
+              "(e.g. 'Sure,' or 'Got it.') so the listener hears something immediately. " +
+              "Before any tool call, search, or long operation, say what you are about to do in natural spoken language " +
+              "(e.g. 'Sure, let me look that up.' or 'Let me check your calendar.').",
             streamParams: { maxTokens: 150 },
           },
           this.params.runtime,
         );
-        logger.info(`agent result: payloads=${(result?.payloads ?? []).length} meta=${JSON.stringify(result?.meta ?? {}).slice(0, 200)}`);
+        logger.info(
+          `agent result: payloads=${(result?.payloads ?? []).length} meta=${JSON.stringify(result?.meta ?? {}).slice(0, 200)}`,
+        );
 
         // Flush any remaining buffered text after the LLM completes.
         // If the event listener didn't capture anything (non-streaming model),
@@ -1015,8 +1026,11 @@ export class DiscordVoiceManager {
           extraSystemPrompt:
             "You are in a live voice conversation. Reply with plain spoken text ONLY. " +
             "Do NOT use the tts tool — your text response will be converted to speech automatically. " +
-            "Keep responses VERY short — 1 to 2 sentences max. Do NOT use markdown, asterisks, or any formatting — this is spoken audio. " +
-            "When using cognee or memory tools, briefly acknowledge first (e.g. 'Let me think about that.').",
+            "Keep responses VERY short — 1 to 2 sentences max. Do NOT use markdown, asterisks, emojis, or any special characters — this is spoken audio. " +
+            "Always begin your reply with a short spoken acknowledgment clause ending in a comma or period " +
+            "(e.g. 'Sure,' or 'Got it.') so the listener hears something immediately. " +
+            "Before any tool call, search, or long operation, say what you are about to do in natural spoken language " +
+            "(e.g. 'Sure, let me look that up.' or 'Let me check your calendar.').",
           streamParams: { maxTokens: 150 },
         },
         this.params.runtime,
@@ -1061,9 +1075,7 @@ export class DiscordVoiceManager {
       if (this.bridgeClient) {
         // Bridge mode: read the audio file and send to sidecar
         const audioData = readFileSync(audioPath);
-        logger.info(
-          `tts bridge: guild ${entry.guildId} (${audioData.length} bytes)`,
-        );
+        logger.info(`tts bridge: guild ${entry.guildId} (${audioData.length} bytes)`);
         await this.bridgeClient.play(entry.guildId, audioData);
       } else {
         this.enqueuePlayback(entry, async () => {
@@ -1072,9 +1084,11 @@ export class DiscordVoiceManager {
           );
           const resource = createAudioResource(audioPath);
           entry.player.play(resource);
-          await entersState(entry.player, AudioPlayerStatus.Playing, PLAYBACK_READY_TIMEOUT_MS).catch(
-            () => undefined,
-          );
+          await entersState(
+            entry.player,
+            AudioPlayerStatus.Playing,
+            PLAYBACK_READY_TIMEOUT_MS,
+          ).catch(() => undefined);
           await entersState(entry.player, AudioPlayerStatus.Idle, SPEAKING_READY_TIMEOUT_MS).catch(
             () => undefined,
           );
