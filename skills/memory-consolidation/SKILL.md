@@ -30,6 +30,12 @@ Everything in `min`, plus:
 2. **Narrative collapsing** — merge retry sequences into clean single narratives (e.g., "tried X, failed, tried X again, succeeded" → "tried X, initially failed, then succeeded")
 3. **Ambiguity preservation** — mark unclear spans with `[UNCLEAR: original text]`. **Never guess.**
 4. **Leave original text as-is** for anything you're unsure about
+5. **Agent turn scrutiny** — critically evaluate each agent turn. Keep the turn **only if** it contains substantive information worth storing in the knowledge graph (e.g., decisions made, facts stated, technical explanations, action outcomes, recommendations given). **Drop** agent turns that are:
+   - Pleasantries, greetings, or conversational filler ("Sure thing!", "Let me know if you need anything")
+   - Internal scaffolding (raw tool output, JSON dumps, config listings, file contents)
+   - Restating what the user just said without adding information
+   - Status updates with no useful detail ("Working on it...", "Done!")
+   - When in doubt, keep the turn — err on the side of preserving information
 
 ### Entity Lookup Table
 ```json
