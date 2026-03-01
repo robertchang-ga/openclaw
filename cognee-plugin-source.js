@@ -685,6 +685,25 @@ const memoryCogneePlugin = {
                         details: { skipped: true },
                     };
                 }
+                // Sync any changed memory files before cognifying
+                const workspaceDir = resolvedWorkspaceDir || process.cwd();
+                try {
+                    const files = await collectMemoryFiles(workspaceDir);
+                    const changedFiles = files.filter((f) => {
+                        const existing = syncIndex.entries[f.path];
+                        return !existing || existing.hash !== f.hash;
+                    });
+                    if (changedFiles.length > 0) {
+                        api.logger.info?.(`memory-cognee: cognify pre-sync: ${changedFiles.length} changed file(s)`);
+                        const syncResult = await syncFiles(client, changedFiles, syncIndex, cfg, api.logger);
+                        if (syncResult.datasetId) {
+                            datasetId = syncResult.datasetId;
+                        }
+                        api.logger.info?.(`memory-cognee: cognify pre-sync: ${syncResult.added} added, ${syncResult.updated} updated`);
+                    }
+                } catch (syncErr) {
+                    api.logger.warn?.(`memory-cognee: cognify pre-sync failed: ${String(syncErr)}`);
+                }
                 try {
                     const result = await client.cognify({ datasetIds: [dsId] });
                     syncIndex.needsCognify = false;
