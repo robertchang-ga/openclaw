@@ -91,41 +91,39 @@ export async function emitResetCommandHooks(params: {
   if (hookRunner?.hasHooks("before_reset")) {
     const prevEntry = params.previousSessionEntry;
     const sessionFile = prevEntry?.sessionFile;
-    // Fire-and-forget: read old session messages and run hook
-    void (async () => {
-      try {
-        const messages: unknown[] = [];
-        if (sessionFile) {
-          const content = await fs.readFile(sessionFile, "utf-8");
-          for (const line of content.split("\n")) {
-            if (!line.trim()) {
-              continue;
-            }
-            try {
-              const entry = JSON.parse(line);
-              if (entry.type === "message" && entry.message) {
-                messages.push(entry.message);
-              }
-            } catch {
-              // skip malformed lines
-            }
+    // Blocking: transcript cleansing must complete before session wipe
+    try {
+      const messages: unknown[] = [];
+      if (sessionFile) {
+        const content = await fs.readFile(sessionFile, "utf-8");
+        for (const line of content.split("\n")) {
+          if (!line.trim()) {
+            continue;
           }
-        } else {
-          logVerbose("before_reset: no session file available, firing hook with empty messages");
+          try {
+            const entry = JSON.parse(line);
+            if (entry.type === "message" && entry.message) {
+              messages.push(entry.message);
+            }
+          } catch {
+            // skip malformed lines
+          }
         }
-        await hookRunner.runBeforeReset(
-          { sessionFile, messages, reason: params.action },
-          {
-            agentId: params.sessionKey?.split(":")[0] ?? "main",
-            sessionKey: params.sessionKey,
-            sessionId: prevEntry?.sessionId,
-            workspaceDir: params.workspaceDir,
-          },
-        );
-      } catch (err: unknown) {
-        logVerbose(`before_reset hook failed: ${String(err)}`);
+      } else {
+        logVerbose("before_reset: no session file available, firing hook with empty messages");
       }
-    })();
+      await hookRunner.runBeforeReset(
+        { sessionFile, messages, reason: params.action },
+        {
+          agentId: params.sessionKey?.split(":")[0] ?? "main",
+          sessionKey: params.sessionKey,
+          sessionId: prevEntry?.sessionId,
+          workspaceDir: params.workspaceDir,
+        },
+      );
+    } catch (err: unknown) {
+      logVerbose(`before_reset hook failed: ${String(err)}`);
+    }
   }
 }
 
