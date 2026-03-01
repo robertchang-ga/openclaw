@@ -61,6 +61,8 @@ const CONTENT_NOISE_PATTERNS = [
   // <final>[[reply_to_current]] wrapper
   /<final>\[\[reply_to_current\]\]/g,
   /\[\[reply_to_current\]\]\s*/g,
+  // <final> and </final> tags (keep content, strip tags)
+  /<\/?final>/g,
   // <cognee_memories> blocks (injected recalls)
   /<cognee_memories>[\s\S]*?<\/cognee_memories>\s*/g,
   // Config warnings (plugin id mismatch, etc.)
