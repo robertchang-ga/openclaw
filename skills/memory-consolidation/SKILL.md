@@ -39,7 +39,7 @@ Everything in `min`, plus:
 
 ## Output Format
 
-The cleaned transcript MUST preserve the existing YAML frontmatter block (`---` ... `---`) exactly as-is. Only modify the body content below the frontmatter per the instructions above. For Fireflies meeting transcripts, add `pass2: true` to the frontmatter after cleaning to prevent re-processing.
+The cleaned transcript MUST preserve the existing YAML frontmatter block (`---` ... `---`) exactly as-is. Only modify the body content below the frontmatter per the instructions above.
 
 ## Sleep Cycle Architecture
 
@@ -50,22 +50,25 @@ The sleep cycle runs on three triggers:
 
 ### Steps (in order):
 1. **Pass 1 — Deterministic** (`before_reset` hook, blocking):
-   - Session transcript cleansing via `transcript-cleaner.js`
-   - Fireflies meeting transcript frontmattering via `cleanseFirefliesTranscripts`
+   - Session transcript cleansing via `transcript-cleaner.js` → `.staging/sessions/`
+   - Fireflies meeting transcript frontmattering via `cleanseFirefliesTranscripts` → `.staging/meetings/`
 2. **Pass 2 — Agentic** (consolidation turn in `commands-core.ts`, blocking):
-   - LLM cleaning on cleansed session transcripts (this skill)
-   - Episodic reflection writing
-   - MEMORY.md semantic update
-   - Fireflies meeting transcript Pass 2 cleaning
+   - LLM cleaning on staged session transcripts (this skill) → `memory/cleansed-sessions/`
+   - LLM cleaning on staged Fireflies transcripts → `memory/bpc_meetings/`
+   - Episodic reflection writing → `memory/episodes/`
+   - MEMORY.md semantic update (append-only)
+   - `cognee_cognify` tool call to index all new memory files
 3. **Reset session** — clean slate
 
-### Output Locations
-| Document | Location | Type |
+### Directory Flow
+| Stage | Location | Contents |
 |---|---|---|
-| Cleansed sessions | `memory/cleansed-sessions/YYYYMMDD_HHMMSS.md` | `type: session` |
-| Episodic reflections | `memory/episodes/YYYYMMDD_HHMMSS.md` | `type: episode` |
-| Semantic memory | `MEMORY.md` | append-only |
-| Meeting transcripts | `memory/bpc_meetings/` | `type: meeting` |
+| Staging (Pass 1 output) | `.staging/sessions/` | Frontmatted session transcripts |
+| Staging (Pass 1 output) | `.staging/meetings/` | Frontmatted Fireflies transcripts |
+| Final (Pass 2 output) | `memory/cleansed-sessions/` | LLM-cleaned session transcripts |
+| Final (Pass 2 output) | `memory/bpc_meetings/` | LLM-cleaned meeting transcripts |
+| Final (agent-written) | `memory/episodes/` | Episodic reflections |
+| Final (agent-appended) | `MEMORY.md` | Semantic memory |
 
 ### Key Principles
 - **Clean, don't summarize** — preserve the full conversation, just remove noise

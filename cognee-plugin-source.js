@@ -987,7 +987,7 @@ const memoryCogneePlugin = {
         // ------------------------------------------------------------------
         async function cleanseFirefliesTranscripts(logger) {
             const rawDir = join(homedir(), ".openclaw", "workspace", "bpc_transcripts");
-            const outputDir = join(homedir(), ".openclaw", "workspace", "memory", "bpc_meetings");
+            const outputDir = join(homedir(), ".openclaw", "workspace", ".staging", "meetings");
             let files = [];
             try {
                 files = (await fs.readdir(rawDir)).filter((f) => f.endsWith(".txt"));

@@ -25,8 +25,8 @@ const CLEANSED_SESSIONS_DIR = join(
   homedir(),
   ".openclaw",
   "workspace",
-  "memory",
-  "cleansed-sessions"
+  ".staging",
+  "sessions"
 );
 
 /** Entry types to skip entirely (non-message metadata). */
