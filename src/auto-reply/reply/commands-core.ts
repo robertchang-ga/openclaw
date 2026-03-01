@@ -180,6 +180,24 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       previousSessionEntry: params.previousSessionEntry,
       workspaceDir: params.workspaceDir,
     });
+    // Run consolidation turn — agent writes episodic reflection + updates MEMORY.md
+    // before the session is wiped. This is blocking (awaited) so memory is preserved.
+    try {
+      const { runConsolidationTurn } = await import("./agent-runner-consolidation.js");
+      await runConsolidationTurn({
+        cfg: params.cfg,
+        provider: params.provider,
+        model: params.model,
+        sessionEntry: params.sessionEntry,
+        previousSessionEntry: params.previousSessionEntry,
+        sessionKey: params.sessionKey,
+        agentId: params.agentId,
+        agentDir: params.agentDir,
+        workspaceDir: params.workspaceDir,
+      });
+    } catch (err) {
+      logVerbose(`consolidation turn failed: ${String(err)}`);
+    }
   }
 
   const allowTextCommands = shouldHandleTextCommands({

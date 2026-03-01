@@ -836,33 +836,15 @@ const memoryCogneePlugin = {
             if (sleepCycleRunning) return;
             sleepCycleRunning = true;
             try {
-                api.logger.info?.("memory-cognee: sleep cycle starting — consolidating memories");
-                let cleansedFilename = null;
-                // Step 1: forced consolidation turn (episodic reflection + MEMORY.md)
-                try {
-                    const { forceConsolidationTurn } = await import("./consolidation-writer.js");
-                    const consolidationResult = await forceConsolidationTurn({
-                        messages: messages || [],
-                        sessionFile,
-                        reason: reason || "reset",
-                    });
-                    if (consolidationResult.episodePath) {
-                        api.logger.info?.(
-                            `memory-cognee: episodic reflection → ${consolidationResult.episodePath}`
-                        );
-                    }
-                    if (consolidationResult.memoryUpdated) {
-                        api.logger.info?.("memory-cognee: MEMORY.md updated");
-                    }
-                } catch (consolErr) {
-                    api.logger.warn?.(`memory-cognee: consolidation turn failed: ${String(consolErr)}`);
-                }
-                // Step 2: cleanse transcript (Pass 1 deterministic + Pass 2 via agent)
+                api.logger.info?.("memory-cognee: sleep cycle starting — cleansing transcript");
+                // Cleanse transcript (Pass 1 deterministic + Pass 2 via agent)
+                // Note: episodic reflection + MEMORY.md update is handled by the
+                // agentic consolidation turn in commands-core.ts BEFORE the reset
+                // reaches this hook. This hook only handles transcript cleansing.
                 try {
                     const { cleanseTranscript } = await import("./transcript-cleaner.js");
                     const result = await cleanseTranscript(sessionFile);
                     if (result.outputPath) {
-                        cleansedFilename = result.outputPath.split(/[/\\]/).pop();
                         api.logger.info?.(
                             `memory-cognee: transcript cleansed → ${result.outputPath} ` +
                             `(${result.stats.entryCount} entries, ${result.stats.orphanCount} orphans)`
