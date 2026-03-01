@@ -78,7 +78,7 @@ const CONTENT_NOISE_PATTERNS = [
 
 /** Tool names whose output is ephemeral (scaffolding, not significant). */
 const EPHEMERAL_TOOLS = new Set([
-  "read_file", "view_file", "list_dir", "find_file", "cat", "ls", "pwd",
+  "read_file", "read", "view_file", "list_dir", "find_file", "cat", "ls", "pwd",
   "get_config", "check_config", "read_config",
   "which", "type", "where", "file",
 ]);
@@ -299,6 +299,10 @@ function processEntry(entry) {
     const toolName = entry.toolName || message.name || "tool";
     if (!isSignificantToolOutput(toolName)) {
       return null; // Skip ephemeral tool results entirely
+    }
+    // Skip tool results that contain YAML frontmatter (e.g., skill files)
+    if (text.trimStart().startsWith("---\n")) {
+      return null;
     }
     // Truncate very long tool results
     const maxLen = 2000;
