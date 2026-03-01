@@ -6,6 +6,10 @@ RUN pip install --no-cache-dir "graphiti-core>=0.7.0,<0.8"
 # Add custom Graphiti router module
 COPY graphiti_router.py /app/cognee/api/v1/graphiti_router.py
 
+# Validate the sed anchor exists before patching — fail loudly if upstream changed
+RUN grep -q "get_health_router" /app/cognee/api/client.py || \
+    (echo "ERROR: Expected anchor 'get_health_router' not found in client.py — Cognee upstream may have changed" && exit 1)
+
 # Patch client.py to mount the Graphiti router alongside existing routers.
 # We append the import + router registration at the end of the file,
 # just before the root endpoint.

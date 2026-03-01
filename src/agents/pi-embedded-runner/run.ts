@@ -50,8 +50,7 @@ import {
 } from "../pi-embedded-helpers.js";
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../usage.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
-// DISABLED: compaction replaced by memory consolidation sleep cycle
-// import { compactEmbeddedPiSessionDirect } from "./compact.js";
+
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { resolveModel } from "./model.js";

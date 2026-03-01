@@ -70,11 +70,11 @@ const CONTENT_NOISE_PATTERNS = [
 ];
 
 /** Tool names whose output is ephemeral (scaffolding, not significant). */
-const EPHEMERAL_TOOL_PATTERNS = [
-  /^(read_file|view_file|list_dir|find_file|cat|ls|pwd)$/i,
-  /^(get_config|check_config|read_config)$/i,
-  /^(which|type|where|file)$/i,
-];
+const EPHEMERAL_TOOLS = new Set([
+  "read_file", "view_file", "list_dir", "find_file", "cat", "ls", "pwd",
+  "get_config", "check_config", "read_config",
+  "which", "type", "where", "file",
+]);
 
 // ---------------------------------------------------------------------------
 // Pass 1: Deterministic Cleaning
@@ -185,7 +185,7 @@ function extractTextContent(message) {
  * Significant outputs are preserved; ephemeral ones are summarized.
  */
 function isSignificantToolOutput(toolName) {
-  return !EPHEMERAL_TOOL_PATTERNS.some((pattern) => pattern.test(toolName));
+  return !EPHEMERAL_TOOLS.has(toolName.toLowerCase());
 }
 
 /**
@@ -297,13 +297,13 @@ function generateSessionMeta(entries) {
   const sessionId = entries.find((e) => e.sessionId)?.sessionId || "unknown";
 
   const formatTime = (d) => {
-    const h = d.getHours().toString().padStart(2, "0");
-    const m = d.getMinutes().toString().padStart(2, "0");
+    const h = d.getUTCHours().toString().padStart(2, "0");
+    const m = d.getUTCMinutes().toString().padStart(2, "0");
     return `${h}:${m}`;
   };
 
   const dateStr = startDate.toISOString().split("T")[0];
-  const timeRange = `${formatTime(startDate)}-${formatTime(endDate)} EST`;
+  const timeRange = `${formatTime(startDate)}-${formatTime(endDate)} UTC`;
 
   return { dateStr, timeRange, sessionId, startDate };
 }
@@ -376,29 +376,31 @@ async function pass1(filePath) {
  * @param {string} sessionFilePath - Path to the raw .jsonl session file
  * @param {object} options
  * @param {string} [options.outputDir] - Override output directory
+ * @param {object} [options.logger] - Optional logger (default: console)
  * @returns {{ outputPath: string, stats: object }}
  */
 export async function cleanseTranscript(sessionFilePath, options = {}) {
   const outputDir = options.outputDir || CLEANSED_SESSIONS_DIR;
+  const log = options.logger || console;
 
   // Run Pass 1
   const result = await pass1(sessionFilePath);
 
   if (!result.meta) {
-    console.warn("[transcript-cleaner] empty session file, nothing to cleanse");
+    (log.warn || log.log).call(log, "[transcript-cleaner] empty session file, nothing to cleanse");
     return { outputPath: null, stats: { entryCount: 0 } };
   }
 
-  // Generate output filename from session start time
+  // Generate output filename from session start time (UTC)
   const ts = result.meta.startDate;
   const timestamp = [
-    ts.getFullYear(),
-    String(ts.getMonth() + 1).padStart(2, "0"),
-    String(ts.getDate()).padStart(2, "0"),
+    ts.getUTCFullYear(),
+    String(ts.getUTCMonth() + 1).padStart(2, "0"),
+    String(ts.getUTCDate()).padStart(2, "0"),
     "_",
-    String(ts.getHours()).padStart(2, "0"),
-    String(ts.getMinutes()).padStart(2, "0"),
-    String(ts.getSeconds()).padStart(2, "0"),
+    String(ts.getUTCHours()).padStart(2, "0"),
+    String(ts.getUTCMinutes()).padStart(2, "0"),
+    String(ts.getUTCSeconds()).padStart(2, "0"),
   ].join("");
   const outputPath = join(outputDir, `${timestamp}.md`);
 
@@ -408,7 +410,7 @@ export async function cleanseTranscript(sessionFilePath, options = {}) {
   // Write Pass 1 output
   await fs.writeFile(outputPath, result.markdown, "utf-8");
 
-  console.log(
+  (log.info || log.log).call(log,
     `[transcript-cleaner] Pass 1 complete: ${result.entryCount} entries → ` +
       `${result.processedCount} fragments, ${result.orphanCount} orphans → ${outputPath}`
   );

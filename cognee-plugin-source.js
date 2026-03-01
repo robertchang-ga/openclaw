@@ -1022,11 +1022,6 @@ const memoryCogneePlugin = {
                 const inputPath = join(rawDir, file);
                 const outputFile = file.replace(/\.txt$/, ".md");
                 const outputPath = join(outputDir, outputFile);
-                // Skip if already cleaned
-                try {
-                    await fs.access(outputPath);
-                    continue; // Already exists
-                } catch { /* doesn't exist yet, proceed */ }
                 try {
                     const content = await fs.readFile(inputPath, "utf-8");
                     // Extract metadata from filename pattern:
@@ -1060,10 +1055,13 @@ const memoryCogneePlugin = {
                         "---",
                         "",
                     ].filter(Boolean).join("\n");
-                    await fs.writeFile(outputPath, frontmatter + content, "utf-8");
+                    await fs.writeFile(outputPath, frontmatter + content, { encoding: "utf-8", flag: "wx" });
                     processed++;
                     logger?.info?.(`Fireflies: ${file} → ${outputFile}`);
                 } catch (err) {
+                    if (err?.code === "EEXIST") {
+                        continue; // Already processed — skip
+                    }
                     logger?.warn?.(`Failed to process Fireflies transcript ${file}: ${String(err)}`);
                 }
             }
