@@ -708,9 +708,26 @@ const memoryCogneePlugin = {
                     const result = await client.cognify({ datasetIds: [dsId] });
                     syncIndex.needsCognify = false;
                     await saveSyncIndex(syncIndex);
+                    // Chain Graphiti temporal awareness pipeline
+                    let graphitiResult = null;
+                    try {
+                        api.logger.info?.("memory-cognee: chaining Graphiti cognify...");
+                        graphitiResult = await client.graphitiCognify({ datasetIds: [dsId] });
+                        api.logger.info?.(`memory-cognee: Graphiti cognify complete: ${graphitiResult?.episodes_added ?? 0} episodes`);
+                    } catch (graphitiErr) {
+                        api.logger.warn?.(`memory-cognee: Graphiti cognify failed (non-fatal): ${String(graphitiErr)}`);
+                        graphitiResult = { error: String(graphitiErr) };
+                    }
+                    const summary = [
+                        `Cognify completed successfully for dataset ${dsId}.`,
+                        `Cognee: ${JSON.stringify(result, null, 2)}`,
+                        graphitiResult?.error
+                            ? `Graphiti: failed — ${graphitiResult.error}`
+                            : `Graphiti: ${graphitiResult?.episodes_added ?? 0} episodes added`,
+                    ].join("\n");
                     return {
-                        content: [{ type: "text", text: `Cognify completed successfully for dataset ${dsId}.\n${JSON.stringify(result, null, 2)}` }],
-                        details: result,
+                        content: [{ type: "text", text: summary }],
+                        details: { cognee: result, graphiti: graphitiResult },
                     };
                 } catch (error) {
                     api.logger.warn?.(`memory-cognee: cognify failed: ${String(error)}`);
