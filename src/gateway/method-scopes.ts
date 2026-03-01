@@ -109,6 +109,7 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "sessions.reset",
     "sessions.delete",
     "sessions.compact",
+    "session.consolidate",
     "connect",
     "chat.inject",
     "web.login.start",

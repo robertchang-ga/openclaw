@@ -129,4 +129,30 @@ export function registerSystemCli(program: Command) {
       });
     });
   });
+
+  type ConsolidateOpts = GatewayRpcOpts & { key?: string; json?: boolean };
+  addGatewayClientOptions(
+    system
+      .command("consolidate")
+      .description(
+        "Run the full memory consolidation pipeline (Pass 1 + Pass 2) then reset the session",
+      )
+      .option("--key <key>", "Session key to consolidate (defaults to main session)")
+      .option("--json", "Output JSON", false)
+      .option("--timeout <ms>", "Timeout in ms", "300000"), // 5 minutes default
+  ).action(async (opts: ConsolidateOpts) => {
+    const params: Record<string, unknown> = {};
+    if (opts.key) {
+      params.key = opts.key;
+    }
+    await runSystemGatewayCommand(
+      opts,
+      async () => {
+        return await callGatewayFromCli("session.consolidate", opts, params, {
+          expectFinal: false,
+        });
+      },
+      "✅ Consolidation complete",
+    );
+  });
 }
