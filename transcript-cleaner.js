@@ -426,3 +426,6 @@ export async function cleanseTranscript(sessionFilePath, options = {}) {
 }
 
 export default { cleanseTranscript };
+
+// Named exports for testing
+export { buildChain, stripContentNoise, processEntry, generateSessionMeta, isSignificantToolOutput, extractTextContent };
