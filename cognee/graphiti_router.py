@@ -63,6 +63,7 @@ def _resolve_graphiti_llm_config():
         return LLMConfig(
             api_key=api_key,
             model=llm_model or "gemini-2.0-flash",
+            small_model=llm_model or "gemini-2.0-flash",
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         )
     else:
@@ -73,6 +74,7 @@ def _resolve_graphiti_llm_config():
         return LLMConfig(
             api_key=api_key,
             model=llm_model or "gpt-4o-mini",
+            small_model=llm_model or "gpt-4o-mini",
         )
 
 
