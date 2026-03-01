@@ -229,6 +229,8 @@ def get_graphiti_router() -> APIRouter:
                 message=f"Graphiti dependencies not installed: {str(e)}",
             )
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
             # Extract detailed error info for OpenAI/LLM API errors
             error_details = str(e)
             if hasattr(e, 'response'):
@@ -241,10 +243,10 @@ def get_graphiti_router() -> APIRouter:
                     pass
             if hasattr(e, 'body'):
                 error_details += f" | body={e.body}"
-            logger.error(f"Graphiti cognify failed: {error_details}", exc_info=True)
+            logger.error(f"Graphiti cognify failed: {error_details}\n{tb}")
             return GraphitiCognifyResponse(
                 success=False,
-                message=f"Graphiti cognify failed: {error_details}",
+                message=f"Graphiti cognify failed: {error_details}\nTraceback:\n{tb[-1000:]}",
             )
 
     @router.get("/status")
