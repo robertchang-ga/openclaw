@@ -836,11 +836,12 @@ const memoryCogneePlugin = {
             if (sleepCycleRunning) return;
             sleepCycleRunning = true;
             try {
-                api.logger.info?.("memory-cognee: sleep cycle starting — cleansing transcript");
-                // Cleanse transcript (Pass 1 deterministic + Pass 2 via agent)
-                // Note: episodic reflection + MEMORY.md update is handled by the
-                // agentic consolidation turn in commands-core.ts BEFORE the reset
-                // reaches this hook. This hook only handles transcript cleansing.
+                api.logger.info?.("memory-cognee: sleep cycle starting — Pass 1 cleansing");
+                // Pass 1: deterministic cleansing for session transcripts and Fireflies
+                // The agentic consolidation turn (Pass 2) runs in commands-core.ts
+                // AFTER this hook completes, and expects frontmatted files.
+
+                // Session transcript Pass 1
                 try {
                     const { cleanseTranscript } = await import("./transcript-cleaner.js");
                     const result = await cleanseTranscript(sessionFile);
@@ -853,7 +854,15 @@ const memoryCogneePlugin = {
                 } catch (cleanErr) {
                     api.logger.warn?.(`memory-cognee: transcript cleansing failed: ${String(cleanErr)}`);
                 }
-                api.logger.info?.("memory-cognee: sleep cycle complete");
+
+                // Fireflies meeting transcripts Pass 1 (YAML frontmatter)
+                try {
+                    await cleanseFirefliesTranscripts(api.logger);
+                } catch (ffErr) {
+                    api.logger.warn?.(`memory-cognee: Fireflies cleansing failed: ${String(ffErr)}`);
+                }
+
+                api.logger.info?.("memory-cognee: sleep cycle Pass 1 complete");
             } catch (err) {
                 api.logger.warn?.(`memory-cognee: sleep cycle failed: ${String(err)}`);
             } finally {

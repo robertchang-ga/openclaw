@@ -39,7 +39,7 @@ Everything in `min`, plus:
 
 ## Output Format
 
-The cleaned transcript should maintain the existing YAML frontmatter and structure. Only modify the body content per the instructions above.
+The cleaned transcript MUST preserve the existing YAML frontmatter block (`---` ... `---`) exactly as-is. Only modify the body content below the frontmatter per the instructions above. For Fireflies meeting transcripts, add `pass2: true` to the frontmatter after cleaning to prevent re-processing.
 
 ## Sleep Cycle Architecture
 
@@ -49,8 +49,14 @@ The sleep cycle runs on three triggers:
 3. **Manual `/reset` or `/new`** — via `before_reset` hook
 
 ### Steps (in order):
-1. **Forced consolidation turn** — write episodic reflection + update MEMORY.md
-2. **Cleanse transcript** — Pass 1 (deterministic) + Pass 2 (this skill)
+1. **Pass 1 — Deterministic** (`before_reset` hook, blocking):
+   - Session transcript cleansing via `transcript-cleaner.js`
+   - Fireflies meeting transcript frontmattering via `cleanseFirefliesTranscripts`
+2. **Pass 2 — Agentic** (consolidation turn in `commands-core.ts`, blocking):
+   - LLM cleaning on cleansed session transcripts (this skill)
+   - Episodic reflection writing
+   - MEMORY.md semantic update
+   - Fireflies meeting transcript Pass 2 cleaning
 3. **Reset session** — clean slate
 
 ### Output Locations
