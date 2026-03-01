@@ -275,6 +275,8 @@ function processEntry(entry) {
   text = stripContentNoise(text);
 
   if (!text && role !== "assistant") return null;
+  // Skip agent turns that are just "(no output)" or empty after cleaning
+  if (role === "assistant" && (!text || text.trim().toLowerCase() === "(no output)")) return null;
 
   // Format with speaker labels and timestamp
   const speaker = role === "user" ? "[User]" : "[Agent]";
