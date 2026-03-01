@@ -76,6 +76,22 @@ const EPHEMERAL_TOOLS = new Set([
   "which", "type", "where", "file",
 ]);
 
+/**
+ * Format an entry timestamp as a short time label for inline display.
+ * Returns " [HH:MM UTC]" or "" if the timestamp can't be parsed.
+ */
+function formatEntryTime(ts) {
+  try {
+    const d = typeof ts === "number" ? new Date(ts) : new Date(ts);
+    if (isNaN(d.getTime())) return "";
+    const h = d.getUTCHours().toString().padStart(2, "0");
+    const m = d.getUTCMinutes().toString().padStart(2, "0");
+    return ` [${h}:${m} UTC]`;
+  } catch {
+    return "";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Pass 1: Deterministic Cleaning
 // ---------------------------------------------------------------------------
@@ -253,8 +269,10 @@ function processEntry(entry) {
 
   if (!text && role !== "assistant") return null;
 
-  // Format with speaker labels
+  // Format with speaker labels and timestamp
   const speaker = role === "user" ? "**User**" : "**Agent**";
+  const ts = entry.timestamp || entry.createdAt;
+  const timeLabel = ts ? formatEntryTime(ts) : "";
 
   // Handle tool use in assistant messages
   const toolCalls = [];
@@ -282,7 +300,7 @@ function processEntry(entry) {
   }
 
   // Build the output
-  let output = `\n${speaker}: ${text}`;
+  let output = `\n${speaker}${timeLabel}: ${text}`;
   if (toolCalls.length > 0) {
     output += "\n" + toolCalls.join("\n");
   }
