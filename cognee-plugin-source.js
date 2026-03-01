@@ -1139,7 +1139,7 @@ const memoryCogneePlugin = {
                         "---",
                         "",
                     ].filter(Boolean).join("\n");
-                    await fs.writeFile(outputPath, frontmatter + transformedContent, { encoding: "utf-8", flag: "wx" });
+                    await fs.writeFile(outputPath, frontmatter + "\n" + transformedContent, { encoding: "utf-8", flag: "wx" });
                     processed++;
                     logger?.info?.(`Fireflies: ${file} \u2192 ${outputFile}`);
                 } catch (err) {

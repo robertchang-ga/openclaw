@@ -67,6 +67,11 @@ const CONTENT_NOISE_PATTERNS = [
   /⚠️\s*Warning:.*plugin id mismatch.*\n?/gi,
   // Repetitive system noise
   /\[System\]\s*Plugin.*loaded.*\n?/gi,
+  // Embedded timestamps (redundant with per-turn [HH:MM UTC] prefix)
+  // e.g., [Wed 2026-02-04 14:26 UTC] or [Mon 2026-03-01 09:15 UTC]
+  /\[\w{3}\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+UTC\]\s*/g,
+  // Message ID metadata lines
+  /\[message_id:\s*[0-9a-f-]+\]\s*/gi,
 ];
 
 /** Tool names whose output is ephemeral (scaffolding, not significant). */
