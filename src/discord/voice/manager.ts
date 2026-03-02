@@ -626,6 +626,8 @@ export class DiscordVoiceManager {
     const opusDecoder = createOpusDecoder();
     if (opusDecoder) {
       logger.info(`voice: opus decoder for realtime: ${opusDecoder.name}`);
+    } else {
+      logger.warn(`voice: no opus decoder available — audio capture disabled for guild ${guildId}`);
     }
 
     const speakingHandler = (userId: string) => {
@@ -648,9 +650,32 @@ export class DiscordVoiceManager {
         },
       });
 
+      let firstChunkLogged = false;
+      let sttDropWarnedAt = 0;
       stream.on("data", (chunk: Buffer) => {
-        if (!chunk || chunk.length === 0 || !opusDecoder || !stt.isConnected) {
+        if (!chunk || chunk.length === 0) {
           return;
+        }
+        if (!opusDecoder) {
+          // Already warned at join time; no need to repeat per-chunk
+          return;
+        }
+        if (!stt.isConnected) {
+          // Throttle to one warning per 5s so logs don't flood
+          const now = Date.now();
+          if (now - sttDropWarnedAt > 5_000) {
+            sttDropWarnedAt = now;
+            logger.warn(
+              `voice: STT not connected — dropping audio for user ${userId} guild ${guildId} (Speaches unreachable?)`,
+            );
+          }
+          return;
+        }
+        if (!firstChunkLogged) {
+          firstChunkLogged = true;
+          logger.info(
+            `voice: first audio chunk received for user ${userId} guild ${guildId} (${chunk.length} bytes opus)`,
+          );
         }
         try {
           const pcm48k = opusDecoder.decoder.decode(chunk);
@@ -839,6 +864,9 @@ export class DiscordVoiceManager {
   }) {
     const { entry, transcript, userId } = params;
     if (!transcript || transcript.length < 2) {
+      logger.info(
+        `processTranscript: dropped (too short: ${transcript?.length ?? 0} chars) guild ${entry.guildId}`,
+      );
       return;
     }
 
