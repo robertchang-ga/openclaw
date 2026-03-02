@@ -198,16 +198,36 @@ def get_graphiti_router() -> APIRouter:
             await graphiti.build_indices_and_constraints()
             logger.info("Graph database initialized")
 
-            # Add episodes
-            for i, text in enumerate(all_texts):
-                await graphiti.add_episode(
-                    name=f"episode_{i}",
-                    episode_body=text,
-                    source=EpisodeType.text,
-                    source_description="openclaw-memory",
-                    reference_time=datetime.now(),
+            # Temporarily hide cognee's Entity nodes from graphiti's full-text
+            # index by removing their Entity label. Cognee and graphiti share
+            # Neo4j; graphiti's node_fulltext_search returns all :Entity nodes
+            # and fails constructing EntityNode when uuid/summary are null
+            # (cognee nodes never have these fields).
+            await graphiti.driver.execute_query(
+                """MATCH (n:Entity) WHERE n.uuid IS NULL
+                   REMOVE n:Entity SET n:_CogneeEntity""",
+                database_="neo4j",
+            )
+            logger.info("Temporarily hidden cognee Entity nodes from graphiti index")
+
+            # Add episodes — restore cognee nodes even if this fails
+            try:
+                for i, text in enumerate(all_texts):
+                    await graphiti.add_episode(
+                        name=f"episode_{i}",
+                        episode_body=text,
+                        source=EpisodeType.text,
+                        source_description="openclaw-memory",
+                        reference_time=datetime.now(),
+                    )
+                    logger.info(f"Added episode {i}: {text[:50]}...")
+            finally:
+                await graphiti.driver.execute_query(
+                    """MATCH (n:_CogneeEntity)
+                       REMOVE n:_CogneeEntity SET n:Entity""",
+                    database_="neo4j",
                 )
-                logger.info(f"Added episode {i}: {text[:50]}...")
+                logger.info("Restored cognee Entity nodes")
 
             # Bridge Graphiti nodes into Cognee's vector store
             logger.info("Indexing Graphiti objects into Cognee vector store")
