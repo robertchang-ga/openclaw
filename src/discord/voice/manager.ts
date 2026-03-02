@@ -954,9 +954,10 @@ export class DiscordVoiceManager {
       };
 
       const splitAndSpeak = (flush: boolean) => {
-        // Split at sentence AND clause boundaries (commas) for lower latency.
-        // Kokoro produces natural-sounding audio even for comma-delimited clauses.
-        const boundary = flush ? /([.!?:;,])\s*/ : /([.!?:;,])\s+/;
+        // Split only at sentence boundaries — NOT commas. Splitting on commas
+        // causes acknowledgment clauses like "Sure," to play as a separate chunk
+        // that runs straight into the next sentence with no natural pause.
+        const boundary = flush ? /([.!?:;])\s*/ : /([.!?:;])\s+/;
 
         let match: RegExpExecArray | null;
         while ((match = boundary.exec(sentenceBuffer)) !== null) {
