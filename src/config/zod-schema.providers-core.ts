@@ -311,6 +311,21 @@ const DiscordVoiceAutoJoinSchema = z
   })
   .strict();
 
+const DiscordVoiceSttSchema = z
+  .object({
+    provider: z.enum(["speaches", "kroko"]).optional(),
+    kroko: z
+      .object({
+        url: z.string().optional(),
+        language: z.string().optional(),
+        apiKey: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .optional();
+
 const DiscordVoiceSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -318,6 +333,7 @@ const DiscordVoiceSchema = z
     daveEncryption: z.boolean().optional(),
     decryptionFailureTolerance: z.number().int().min(0).optional(),
     tts: TtsConfigSchema.optional(),
+    stt: DiscordVoiceSttSchema,
   })
   .strict()
   .optional();
