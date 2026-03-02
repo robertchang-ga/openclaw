@@ -604,7 +604,7 @@ export class DiscordVoiceManager {
           this.enqueueProcessing(entry, async () => {
             await this.processTranscript({ entry, transcript: mergedText, userId: lastSpeaker });
           });
-        }, 1500);
+        }, 1000);
       },
       onSpeechStart: () => {
         // Interrupt current playback when user starts speaking

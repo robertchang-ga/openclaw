@@ -10,10 +10,10 @@
  * Network: bridge (for Discord) + openclaw-secure-net (for gateway + Speaches)
  */
 
-import { createRequire } from "node:module";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
+import { createRequire } from "node:module";
 import path from "node:path";
 import {
   AudioPlayerStatus,
@@ -35,7 +35,6 @@ import type {
   VoiceBridgeEvent,
   VoiceBridgeJoinRequest,
   VoiceBridgeLeaveRequest,
-  VoiceBridgePlayRequest,
   VoiceBridgeOperationResult,
   VoiceBridgeStatusEntry,
 } from "./voice-bridge-types.js";
@@ -81,9 +80,7 @@ function createOpusDecoder(): { decoder: OpusDecoder; name: string } | null {
       const decoder = new OpusScript(SAMPLE_RATE, CHANNELS, OpusScript.Application.AUDIO);
       if (!warnedOpusFallback) {
         warnedOpusFallback = true;
-        log.warn(
-          `@discordjs/opus unavailable (${String(nativeErr)}); using opusscript fallback`,
-        );
+        log.warn(`@discordjs/opus unavailable (${String(nativeErr)}); using opusscript fallback`);
       }
       return { decoder, name: "opusscript" };
     } catch (jsErr) {
@@ -214,9 +211,7 @@ export class VoiceBridgeServer {
             log.warn(`Cannot send voice payload for guild ${guildId}: no gateway WS`);
             return false;
           }
-          this.gatewayWs.send(
-            JSON.stringify({ type: "send_voice_payload", payload }),
-          );
+          this.gatewayWs.send(JSON.stringify({ type: "send_voice_payload", payload }));
           return true;
         },
         destroy: () => {
@@ -232,13 +227,13 @@ export class VoiceBridgeServer {
    */
   private handleRelayEvent(event: VoiceBridgeEvent): void {
     if (event.type === "voice_state_update") {
-      const data = event.data as Record<string, unknown>;
+      const data = event.data;
       const guildId = data.guild_id as string | undefined;
       if (guildId) {
         this.adapters.get(guildId)?.onVoiceStateUpdate(data as never);
       }
     } else if (event.type === "voice_server_update") {
-      const data = event.data as Record<string, unknown>;
+      const data = event.data;
       const guildId = data.guild_id as string | undefined;
       if (guildId) {
         this.adapters.get(guildId)?.onVoiceServerUpdate(data as never);
@@ -267,7 +262,12 @@ export class VoiceBridgeServer {
       this.gatewayWs = ws;
       ws.on("message", (data) => {
         try {
-          const event: VoiceBridgeEvent = JSON.parse(data.toString());
+          const raw = Buffer.isBuffer(data)
+            ? data.toString("utf8")
+            : Array.isArray(data)
+              ? Buffer.concat(data).toString("utf8")
+              : Buffer.from(data).toString("utf8");
+          const event: VoiceBridgeEvent = JSON.parse(raw);
           this.handleRelayEvent(event);
         } catch (err) {
           log.warn(`Invalid relay event: ${String(err)}`);
@@ -360,9 +360,7 @@ export class VoiceBridgeServer {
 
   // ─── Voice Operations ──────────────────────────────────────
 
-  private async handleJoin(
-    params: VoiceBridgeJoinRequest,
-  ): Promise<VoiceBridgeOperationResult> {
+  private async handleJoin(params: VoiceBridgeJoinRequest): Promise<VoiceBridgeOperationResult> {
     if (!this.gatewayWs || this.gatewayWs.readyState !== WebSocket.OPEN) {
       return { ok: false, message: "Gateway WebSocket not connected" };
     }
@@ -442,13 +440,13 @@ export class VoiceBridgeServer {
           const pending = session.pendingTranscripts ?? [];
           session.pendingTranscripts = [];
           session.transcriptDebounceTimer = null;
-          if (pending.length === 0) return;
+          if (pending.length === 0) {
+            return;
+          }
 
           const mergedText = pending.map((p) => p.text).join(" ");
           const lastSpeaker = pending[pending.length - 1].speakerId;
-          log.info(
-            `debounced transcript (${mergedText.length} chars, ${pending.length} segments)`,
-          );
+          log.info(`debounced transcript (${mergedText.length} chars, ${pending.length} segments)`);
 
           this.emitEvent({
             type: "transcript",
@@ -457,7 +455,7 @@ export class VoiceBridgeServer {
             text: mergedText,
             userId: lastSpeaker,
           });
-        }, 1500);
+        }, 1000);
       },
       onSpeechStart: () => {
         // Interrupt playback when user starts speaking
@@ -480,8 +478,12 @@ export class VoiceBridgeServer {
     }
 
     const speakingHandler = (userId: string) => {
-      if (this.botUserId && userId === this.botUserId) return;
-      if (session.activeSpeakers.has(userId)) return;
+      if (this.botUserId && userId === this.botUserId) {
+        return;
+      }
+      if (session.activeSpeakers.has(userId)) {
+        return;
+      }
       session.activeSpeakers.add(userId);
       session.lastSpeakerId = userId;
 
@@ -490,7 +492,9 @@ export class VoiceBridgeServer {
       });
 
       stream.on("data", (chunk: Buffer) => {
-        if (!chunk || chunk.length === 0 || !opusDecoder || !stt.isConnected) return;
+        if (!chunk || chunk.length === 0 || !opusDecoder || !stt.isConnected) {
+          return;
+        }
         try {
           const pcm48k = opusDecoder.decoder.decode(chunk);
           if (pcm48k && pcm48k.length > 0) {
@@ -523,7 +527,7 @@ export class VoiceBridgeServer {
             session.decryptFailureCount >= DECRYPT_FAILURE_RECONNECT_THRESHOLD &&
             !session.decryptRecoveryInFlight
           ) {
-            this.recoverFromDecryptFailures(session);
+            void this.recoverFromDecryptFailures(session);
           }
         }
       });
@@ -562,14 +566,16 @@ export class VoiceBridgeServer {
     });
 
     player.on("error", (err) => {
-      log.warn(`playback error: ${String(err)}`);
+      log.warn(`playback error: ${err.message}`);
     });
 
     // DAVE decrypt failure tracking
     if (this.config.decryptionFailureTolerance !== 0) {
       connection.on("error" as never, (err: Error) => {
         const msg = err?.message ?? String(err);
-        if (!DECRYPT_FAILURE_PATTERN.test(msg)) return;
+        if (!DECRYPT_FAILURE_PATTERN.test(msg)) {
+          return;
+        }
         const now = Date.now();
         if (now - session.lastDecryptFailureAt > DECRYPT_FAILURE_WINDOW_MS) {
           session.decryptFailureCount = 0;
@@ -580,7 +586,7 @@ export class VoiceBridgeServer {
           session.decryptFailureCount >= DECRYPT_FAILURE_RECONNECT_THRESHOLD &&
           !session.decryptRecoveryInFlight
         ) {
-          this.recoverFromDecryptFailures(session);
+          void this.recoverFromDecryptFailures(session);
         }
       });
     }
@@ -591,9 +597,7 @@ export class VoiceBridgeServer {
     return { ok: true, message: `Joined <#${channelId}>.`, guildId, channelId };
   }
 
-  private async handleLeave(
-    params: VoiceBridgeLeaveRequest,
-  ): Promise<VoiceBridgeOperationResult> {
+  private async handleLeave(params: VoiceBridgeLeaveRequest): Promise<VoiceBridgeOperationResult> {
     const { guildId } = params;
     const session = this.sessions.get(guildId);
     if (!session) {
@@ -604,7 +608,12 @@ export class VoiceBridgeServer {
     }
     session.stop();
     this.sessions.delete(guildId);
-    return { ok: true, message: `Left <#${session.channelId}>.`, guildId, channelId: session.channelId };
+    return {
+      ok: true,
+      message: `Left <#${session.channelId}>.`,
+      guildId,
+      channelId: session.channelId,
+    };
   }
 
   private async handlePlay(params: {
@@ -631,9 +640,11 @@ export class VoiceBridgeServer {
 
         const resource = createAudioResource(audioPath);
         session.player.play(resource);
-        await entersState(session.player, AudioPlayerStatus.Playing, PLAYBACK_READY_TIMEOUT_MS).catch(
-          () => undefined,
-        );
+        await entersState(
+          session.player,
+          AudioPlayerStatus.Playing,
+          PLAYBACK_READY_TIMEOUT_MS,
+        ).catch(() => undefined);
         await entersState(session.player, AudioPlayerStatus.Idle, SPEAKING_READY_TIMEOUT_MS).catch(
           () => undefined,
         );
