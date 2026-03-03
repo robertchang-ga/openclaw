@@ -471,10 +471,16 @@ export class DiscordVoiceManager {
 
     const existing = this.sessions.get(guildId);
     if (existing && existing.channelId === channelId) {
-      logVoiceVerbose(`join: already connected to guild ${guildId} channel ${channelId}`);
-      return { ok: true, message: `Already connected to <#${channelId}>.`, guildId, channelId };
-    }
-    if (existing) {
+      if (existing.connection.state.status === VoiceConnectionStatus.Ready) {
+        logVoiceVerbose(`join: already connected to guild ${guildId} channel ${channelId}`);
+        return { ok: true, message: `Already connected to <#${channelId}>.`, guildId, channelId };
+      }
+      // Session exists but connection is not Ready (disconnected/reconnecting) — force rejoin
+      logVoiceVerbose(
+        `join: session for guild ${guildId} channel ${channelId} not ready (${existing.connection.state.status}); rejoining`,
+      );
+      await this.leave({ guildId });
+    } else if (existing) {
       logVoiceVerbose(`join: replacing existing session for guild ${guildId}`);
       await this.leave({ guildId });
     }

@@ -160,6 +160,7 @@
 ## Agent-Specific Notes
 
 - Vocabulary: "makeup" = "mac app".
+- Discord voice channel input: any text received via a Discord voice channel is a speech-to-text (STT) transcription and may not be 100% accurate (words may be misheard or garbled). If the intent is unclear, ask a clarifying question before proceeding.
 - Never edit `node_modules` (global/Homebrew/npm/git installs too). Updates overwrite. Skill notes go in `tools.md` or `AGENTS.md`.
 - When adding a new `AGENTS.md` anywhere in the repo, also add a `CLAUDE.md` symlink pointing to it (example: `ln -s AGENTS.md CLAUDE.md`).
 - Signal: "update fly" => `fly ssh console -a flawd-bot -C "bash -lc 'cd /data/clawd/openclaw && git pull --rebase origin main'"` then `fly machines restart e825232f34d058 -a flawd-bot`.

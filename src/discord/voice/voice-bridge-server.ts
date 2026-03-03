@@ -372,9 +372,15 @@ export class VoiceBridgeServer {
 
     const existing = this.sessions.get(guildId);
     if (existing && existing.channelId === channelId) {
-      return { ok: true, message: `Already connected to <#${channelId}>.`, guildId, channelId };
-    }
-    if (existing) {
+      if (existing.connection.state.status === VoiceConnectionStatus.Ready) {
+        return { ok: true, message: `Already connected to <#${channelId}>.`, guildId, channelId };
+      }
+      // Session exists but connection is not Ready (disconnected/reconnecting) — force rejoin
+      log.info(
+        `join: session for guild ${guildId} channel ${channelId} not ready (${existing.connection.state.status}); rejoining`,
+      );
+      await this.handleLeave({ guildId });
+    } else if (existing) {
       await this.handleLeave({ guildId });
     }
 
