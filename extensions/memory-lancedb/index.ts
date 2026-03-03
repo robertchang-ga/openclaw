@@ -537,7 +537,10 @@ const memoryPlugin = {
 
     // Auto-recall: inject relevant memories before agent starts
     if (cfg.autoRecall) {
-      api.on("before_agent_start", async (event) => {
+      api.on("before_agent_start", async (event, ctx) => {
+        if (ctx.lane === "heartbeat" || ctx.lane === "cron") {
+          return;
+        }
         if (!event.prompt || event.prompt.length < 5) {
           return;
         }
