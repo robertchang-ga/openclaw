@@ -597,6 +597,7 @@ async function sendAnnounce(item: AnnounceQueueItem) {
       threadId: requesterIsSubagent ? undefined : threadId,
       deliver: !requesterIsSubagent,
       idempotencyKey,
+      lane: item.lane,
     },
     timeoutMs: announceTimeoutMs,
   });
@@ -649,6 +650,7 @@ async function maybeQueueSubagentAnnounce(params: {
   summaryLine?: string;
   requesterOrigin?: DeliveryContext;
   signal?: AbortSignal;
+  lane?: string;
 }): Promise<"steered" | "queued" | "none"> {
   if (params.signal?.aborted) {
     return "none";
@@ -691,6 +693,7 @@ async function maybeQueueSubagentAnnounce(params: {
         enqueuedAt: Date.now(),
         sessionKey: canonicalKey,
         origin,
+        lane: params.lane,
       },
       settings: queueSettings,
       send: sendAnnounce,
@@ -714,6 +717,7 @@ async function sendSubagentAnnounceDirectly(params: {
   directOrigin?: DeliveryContext;
   requesterIsSubagent: boolean;
   signal?: AbortSignal;
+  lane?: string;
 }): Promise<SubagentAnnounceDeliveryResult> {
   if (params.signal?.aborted) {
     return {
@@ -843,6 +847,7 @@ async function sendSubagentAnnounceDirectly(params: {
             to: shouldDeliverExternally ? directTo : undefined,
             threadId: shouldDeliverExternally ? threadId : undefined,
             idempotencyKey: params.directIdempotencyKey,
+            lane: params.lane,
           },
           expectFinal: true,
           timeoutMs: announceTimeoutMs,
@@ -879,6 +884,7 @@ async function deliverSubagentAnnouncement(params: {
   spawnMode?: SpawnSubagentMode;
   directIdempotencyKey: string;
   signal?: AbortSignal;
+  lane?: string;
 }): Promise<SubagentAnnounceDeliveryResult> {
   return await runSubagentAnnounceDispatch({
     expectsCompletionMessage: params.expectsCompletionMessage,
@@ -891,6 +897,7 @@ async function deliverSubagentAnnouncement(params: {
         summaryLine: params.summaryLine,
         requesterOrigin: params.requesterOrigin,
         signal: params.signal,
+        lane: params.lane,
       }),
     direct: async () =>
       await sendSubagentAnnounceDirectly({
@@ -906,6 +913,7 @@ async function deliverSubagentAnnouncement(params: {
         expectsCompletionMessage: params.expectsCompletionMessage,
         signal: params.signal,
         bestEffortDeliver: params.bestEffortDeliver,
+        lane: params.lane,
       }),
   });
 }
@@ -1056,6 +1064,7 @@ export async function runSubagentAnnounceFlow(params: {
   spawnMode?: SpawnSubagentMode;
   signal?: AbortSignal;
   bestEffortDeliver?: boolean;
+  lane?: string;
 }): Promise<boolean> {
   let didAnnounce = false;
   const expectsCompletionMessage = params.expectsCompletionMessage === true;
@@ -1322,6 +1331,7 @@ export async function runSubagentAnnounceFlow(params: {
       spawnMode: params.spawnMode,
       directIdempotencyKey,
       signal: params.signal,
+      lane: params.lane,
     });
     didAnnounce = delivery.delivered;
     if (!delivery.delivered && delivery.path === "direct" && delivery.error) {

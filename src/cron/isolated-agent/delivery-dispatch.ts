@@ -312,6 +312,7 @@ export async function dispatchCronDelivery(
         outcome: { status: "ok" },
         announceType: "cron job",
         signal: params.abortSignal,
+        lane: "cron",
       });
       if (didAnnounce) {
         delivered = true;

@@ -28,6 +28,7 @@ export type AnnounceQueueItem = {
   sessionKey: string;
   origin?: DeliveryContext;
   originKey?: string;
+  lane?: string;
 };
 
 export type AnnounceQueueSettings = {
