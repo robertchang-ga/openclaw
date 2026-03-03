@@ -102,6 +102,20 @@ export type DiscordVoiceAutoJoinConfig = {
   channelId: string;
 };
 
+export type DiscordVoiceSttConfig = {
+  /** STT provider to use (default: "speaches"). */
+  provider?: "speaches" | "kroko";
+  /** Kroko on-premise STT configuration. */
+  kroko?: {
+    /** WebSocket URL of the on-premise Kroko server (default: "ws://localhost:8080"). */
+    url?: string;
+    /** Optional ISO-639-1 language hint (e.g. "en"). */
+    language?: string;
+    /** Optional API key; required only for commercial Kroko model licenses. */
+    apiKey?: string;
+  };
+};
+
 export type DiscordVoiceConfig = {
   /** Enable Discord voice channel conversations (default: true). */
   enabled?: boolean;
@@ -113,6 +127,8 @@ export type DiscordVoiceConfig = {
   decryptionFailureTolerance?: number;
   /** Optional TTS overrides for Discord voice output. */
   tts?: TtsConfig;
+  /** Optional STT provider overrides for Discord voice input. */
+  stt?: DiscordVoiceSttConfig;
 };
 
 export type DiscordExecApprovalConfig = {
