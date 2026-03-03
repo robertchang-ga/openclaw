@@ -992,13 +992,12 @@ const memoryCogneePlugin = {
 
         // Skip recall for internal/automated runs — they don't need
         // memory context and waste Cognee API tokens + latency.
+        if (ctx.lane === "heartbeat" || ctx.lane === "cron") {
+          api.logger.debug?.(`memory-cognee: skipping recall (internal run, lane=${ctx.lane})`);
+          return;
+        }
         const sk = ctx.sessionKey ?? "";
-        if (
-          sk.includes("heartbeat") ||
-          sk.includes("cron") ||
-          sk.includes("exec-event") ||
-          sk.includes("discord:channel:1475851746550087775")
-        ) {
+        if (sk.includes("exec-event") || sk.includes("discord:channel:1475851746550087775")) {
           api.logger.debug?.(`memory-cognee: skipping recall (internal/voice: ${sk})`);
           return;
         }
