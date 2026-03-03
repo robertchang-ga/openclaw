@@ -1044,6 +1044,7 @@ export async function runEmbeddedAttempt(
           sessionId: params.sessionId,
           workspaceDir: params.workspaceDir,
           messageProvider: params.messageProvider ?? undefined,
+          lane: params.lane,
         };
         const hookResult = await resolvePromptBuildHookResult({
           prompt: params.prompt,

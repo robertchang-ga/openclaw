@@ -50,7 +50,6 @@ import {
 } from "../pi-embedded-helpers.js";
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../usage.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
-
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { resolveModel } from "./model.js";
@@ -252,6 +251,7 @@ export async function runEmbeddedPiAgent(
         sessionId: params.sessionId,
         workspaceDir: resolvedWorkspace,
         messageProvider: params.messageProvider ?? undefined,
+        lane: params.lane,
       };
       if (hookRunner?.hasHooks("before_model_resolve")) {
         try {
@@ -631,6 +631,7 @@ export async function runEmbeddedPiAgent(
             streamParams: params.streamParams,
             ownerNumbers: params.ownerNumbers,
             enforceFinalTag: params.enforceFinalTag,
+            lane: params.lane,
           });
 
           const {
@@ -793,9 +794,8 @@ export async function runEmbeddedPiAgent(
             return {
               payloads: [
                 {
-                   text:
-                    "💤 Context limit reached — consolidating memories and resetting session.",
-                   isError: true,
+                  text: "💤 Context limit reached — consolidating memories and resetting session.",
+                  isError: true,
                 },
               ],
               meta: {
