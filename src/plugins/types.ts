@@ -329,6 +329,8 @@ export type PluginHookAgentContext = {
   sessionId?: string;
   workspaceDir?: string;
   messageProvider?: string;
+  /** Run lane (e.g. "heartbeat", "cron"). Undefined for normal user-facing runs. */
+  lane?: string;
 };
 
 // before_model_resolve hook

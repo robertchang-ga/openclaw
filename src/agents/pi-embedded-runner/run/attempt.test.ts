@@ -2,6 +2,7 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
+import type { PluginHookAgentContext } from "../../../plugins/types.js";
 import {
   injectHistoryImagesIntoMessages,
   resolveAttemptFsWorkspaceOnly,
@@ -107,6 +108,22 @@ describe("resolvePromptBuildHookResult", () => {
     expect(hookRunner.runBeforeAgentStart).toHaveBeenCalledTimes(1);
     expect(hookRunner.runBeforeAgentStart).toHaveBeenCalledWith({ prompt: "hello", messages }, {});
     expect(result.prependContext).toBe("from-hook");
+  });
+
+  it("passes lane from hookCtx into runBeforeAgentStart", async () => {
+    const hookRunner = createLegacyOnlyHookRunner();
+    const hookCtx: PluginHookAgentContext = { lane: "heartbeat" };
+    await resolvePromptBuildHookResult({
+      prompt: "hello",
+      messages: [],
+      hookCtx,
+      hookRunner,
+    });
+
+    expect(hookRunner.runBeforeAgentStart).toHaveBeenCalledWith(
+      { prompt: "hello", messages: [] },
+      expect.objectContaining({ lane: "heartbeat" }),
+    );
   });
 });
 
