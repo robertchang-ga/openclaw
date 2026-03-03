@@ -304,6 +304,7 @@ export async function runAgentTurnWithFallback(params: {
               return isMarkdownCapableMessageChannel(channel) ? "markdown" : "plain";
             })(),
             suppressToolErrorWarnings: params.opts?.suppressToolErrorWarnings,
+            lane: params.opts?.lane,
             images: params.opts?.images,
             abortSignal: params.opts?.abortSignal,
             blockReplyBreak: params.resolvedBlockStreamingBreak,
@@ -449,13 +450,17 @@ export async function runAgentTurnWithFallback(params: {
             if (sessionFile) {
               const content = fs.readFileSync(sessionFile, "utf-8");
               for (const line of content.split("\n")) {
-                if (!line.trim()) continue;
+                if (!line.trim()) {
+                  continue;
+                }
                 try {
                   const entry = JSON.parse(line);
                   if (entry.type === "message" && entry.message) {
                     messages.push(entry.message);
                   }
-                } catch { /* skip malformed */ }
+                } catch {
+                  /* skip malformed */
+                }
               }
             }
             await hookRunner.runBeforeReset(
@@ -484,7 +489,9 @@ export async function runAgentTurnWithFallback(params: {
             workspaceDir: params.followupRun.run.workspaceDir,
           });
         } catch (consolErr) {
-          logVerbose(`overflow auto-consolidation: consolidation turn failed: ${String(consolErr)}`);
+          logVerbose(
+            `overflow auto-consolidation: consolidation turn failed: ${String(consolErr)}`,
+          );
         }
 
         if (await params.resetSessionAfterCompactionFailure(embeddedError.message)) {

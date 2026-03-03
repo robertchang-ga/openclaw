@@ -27,6 +27,8 @@ export type GetReplyOptions = {
   onTypingCleanup?: () => void;
   onTypingController?: (typing: TypingController) => void;
   isHeartbeat?: boolean;
+  /** Run lane for plugin filtering (e.g. "heartbeat", "cron"). Undefined for normal runs. */
+  lane?: string;
   /** Resolved heartbeat model override (provider/model string from merged per-agent config). */
   heartbeatModelOverride?: string;
   /** If true, suppress tool error warning payloads for this run. */
