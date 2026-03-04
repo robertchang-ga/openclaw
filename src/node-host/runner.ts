@@ -157,7 +157,7 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
   let token: string | undefined;
   let password: string | undefined;
   let browserProxyEnabled: boolean;
-  let skipDeviceAuth = false;
+  let _skipDeviceAuth = false;
 
   if (opts.embedded) {
     // Embedded mode: use provided values directly, skip filesystem persistence.
@@ -173,12 +173,10 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
   } else {
     const config = await ensureNodeHostConfig();
     nodeId = opts.nodeId?.trim() || config.nodeId;
-    displayName =
-      opts.displayName?.trim() || config.displayName || (await getMachineDisplayName());
+    displayName = opts.displayName?.trim() || config.displayName || (await getMachineDisplayName());
     const cfg = loadConfig();
     const resolvedBrowser = resolveBrowserConfig(cfg.browser, cfg);
-    browserProxyEnabled =
-      cfg.nodeHost?.browserProxy?.enabled !== false && resolvedBrowser.enabled;
+    browserProxyEnabled = cfg.nodeHost?.browserProxy?.enabled !== false && resolvedBrowser.enabled;
     tls = opts.gatewayTls ?? cfg.gateway?.tls?.enabled ?? false;
     const isRemoteMode = cfg.gateway?.mode === "remote";
     token =
@@ -189,7 +187,7 @@ export async function startNodeHost(opts: NodeHostRunOptions): Promise<GatewayCl
       opts.password ??
       process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() ??
       (isRemoteMode ? cfg.gateway?.remote?.password : cfg.gateway?.auth?.password);
-    skipDeviceAuth = false;
+    _skipDeviceAuth = false;
   }
 
   const host = opts.gatewayHost ?? "127.0.0.1";

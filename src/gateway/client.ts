@@ -101,7 +101,9 @@ export class GatewayClient {
   constructor(opts: GatewayClientOptions) {
     this.opts = {
       ...opts,
-      deviceIdentity: opts.skipDeviceAuth ? undefined : (opts.deviceIdentity ?? loadOrCreateDeviceIdentity()),
+      deviceIdentity: opts.skipDeviceAuth
+        ? undefined
+        : (opts.deviceIdentity ?? loadOrCreateDeviceIdentity()),
     };
   }
 

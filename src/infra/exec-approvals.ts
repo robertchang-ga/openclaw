@@ -71,7 +71,7 @@ export type HostExecBinEntry = {
 /** Resolved rule for a single hostExecBin entry. */
 export type HostExecBinRule = {
   allow: Set<string> | null; // null = no filter (all allowed)
-  deny: Set<string> | null;  // null = no filter (none denied)
+  deny: Set<string> | null; // null = no filter (none denied)
 };
 
 /** Resolved map of bin name → subcommand rule. */
@@ -247,13 +247,20 @@ export function normalizeExecApprovals(file: ExecApprovalsFile): ExecApprovalsFi
           if (b && typeof b === "object" && typeof b.bin === "string") {
             return {
               bin: b.bin.trim().toLowerCase(),
-              allow: Array.isArray(b.allow) ? b.allow.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean) : undefined,
-              deny: Array.isArray(b.deny) ? b.deny.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean) : undefined,
+              allow: Array.isArray(b.allow)
+                ? b.allow.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean)
+                : undefined,
+              deny: Array.isArray(b.deny)
+                ? b.deny.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean)
+                : undefined,
             };
           }
           return null;
         })
-        .filter((b): b is string | HostExecBinEntry => b !== null && (typeof b === "string" || Boolean((b as HostExecBinEntry).bin)))
+        .filter(
+          (b): b is string | HostExecBinEntry =>
+            b !== null && (typeof b === "string" || Boolean(b.bin)),
+        )
     : undefined;
   const normalized: ExecApprovalsFile = {
     version: 1,
@@ -465,14 +472,18 @@ export function resolveExecApprovalsFromFile(params: {
       }
     } else if (entry && typeof entry === "object" && typeof entry.bin === "string") {
       const bin = entry.bin.trim().toLowerCase();
-      if (!bin) continue;
+      if (!bin) {
+        continue;
+      }
       // If both allow and deny are set, allow wins (safer / more restrictive).
-      const allow = Array.isArray(entry.allow) && entry.allow.length > 0
-        ? new Set(entry.allow.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean))
-        : null;
-      const deny = !allow && Array.isArray(entry.deny) && entry.deny.length > 0
-        ? new Set(entry.deny.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean))
-        : null;
+      const allow =
+        Array.isArray(entry.allow) && entry.allow.length > 0
+          ? new Set(entry.allow.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean))
+          : null;
+      const deny =
+        !allow && Array.isArray(entry.deny) && entry.deny.length > 0
+          ? new Set(entry.deny.map((s: string) => String(s).trim().toLowerCase()).filter(Boolean))
+          : null;
       hostExecBins.set(bin, { allow, deny });
     }
   }
@@ -643,10 +654,7 @@ export function resolveHostExecBinSubcommand(argv: string[]): string {
  *   gog gmail read           → allowed
  *   gog calendar list        → allowed
  */
-export function isHostExecBinAllowed(
-  rule: HostExecBinRule,
-  argv: string[],
-): boolean {
+export function isHostExecBinAllowed(rule: HostExecBinRule, argv: string[]): boolean {
   const positionals = resolveHostExecBinSubcommandPath(argv);
   if (rule.allow) {
     return matchesSubcommandSet(rule.allow, positionals);
@@ -661,10 +669,7 @@ export function isHostExecBinAllowed(
  * Check if any entry in the set is a prefix of the positional args.
  * Entries are space-separated subcommand paths (e.g. "gmail send").
  */
-function matchesSubcommandSet(
-  entries: Set<string>,
-  positionals: string[],
-): boolean {
+function matchesSubcommandSet(entries: Set<string>, positionals: string[]): boolean {
   const joined = positionals.join(" ");
   for (const entry of entries) {
     // Exact match or prefix match (entry is a prefix of the positionals)

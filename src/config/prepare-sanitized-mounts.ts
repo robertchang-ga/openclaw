@@ -184,9 +184,7 @@ export async function prepareSanitizedMounts(opts?: {
       if (!fs.existsSync(modelsJsonPath)) {
         await fs.promises.writeFile(modelsJsonPath, "{}", "utf8");
       }
-      binds.push(
-        `${modelsJsonPath}:/home/node/.openclaw/agents/${agentId}/agent/models.json:rw`,
-      );
+      binds.push(`${modelsJsonPath}:/home/node/.openclaw/agents/${agentId}/agent/models.json:rw`);
 
       // Sessions directory - note: this is at /agents/{id}/sessions, NOT /agents/{id}/agent/sessions
       // Use a separate sessions-secure directory to avoid sessions.json with host paths

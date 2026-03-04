@@ -86,7 +86,9 @@ export class RealtimeSTT {
    * Open the WebSocket connection and configure the session.
    */
   async connect(): Promise<void> {
-    if (this.destroyed) return;
+    if (this.destroyed) {
+      return;
+    }
 
     // Speaches uses query params for transcription-only mode:
     // intent=transcription disables response generation
@@ -175,7 +177,9 @@ export class RealtimeSTT {
    * Call resample48kStereoTo24kMono() before this if coming from Discord.
    */
   feedAudio(pcm24kMono: Buffer): void {
-    if (!this.ws || !this.connected) return;
+    if (!this.ws || !this.connected) {
+      return;
+    }
 
     this.sendEvent({
       type: "input_audio_buffer.append",
@@ -190,7 +194,9 @@ export class RealtimeSTT {
    * VAD commit fire for the same buffer (causing AssertionError in Speaches).
    */
   flushSilence(): void {
-    if (!this.ws || !this.connected) return;
+    if (!this.ws || !this.connected) {
+      return;
+    }
     // 24kHz mono PCM = 24000 samples/sec × 2 bytes/sample = 48000 bytes/sec
     const durationMs = 300;
     const bytesNeeded = Math.ceil((24000 * 2 * durationMs) / 1000);
@@ -227,7 +233,9 @@ export class RealtimeSTT {
   // -----------------------------------------------------------------------
 
   private sendEvent(event: RealtimeEvent): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
     this.ws.send(JSON.stringify(event));
   }
 
@@ -254,7 +262,9 @@ export class RealtimeSTT {
       case "conversation.item.input_audio_transcription.completed": {
         const transcript = (event as { transcript?: string }).transcript?.trim();
         if (transcript && transcript.length > 0) {
-          logger.info(`realtime-stt: transcript (${transcript.length} chars): "${transcript.slice(0, 80)}"`);
+          logger.info(
+            `realtime-stt: transcript (${transcript.length} chars): "${transcript.slice(0, 80)}"`,
+          );
           this.config.onTranscript(transcript);
         } else {
           logger.info("realtime-stt: empty transcript, skipping");
@@ -297,7 +307,9 @@ export class RealtimeSTT {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectTimer || this.destroyed) return;
+    if (this.reconnectTimer || this.destroyed) {
+      return;
+    }
     logger.info("realtime-stt: reconnecting in 3s...");
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;

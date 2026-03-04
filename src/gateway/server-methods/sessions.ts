@@ -234,7 +234,9 @@ async function consolidateSingleSession(
       try {
         const content = await fsPromises.readFile(sessionFile, "utf-8");
         for (const line of content.split("\n")) {
-          if (!line.trim()) continue;
+          if (!line.trim()) {
+            continue;
+          }
           try {
             const parsed = JSON.parse(line);
             if (parsed.type === "message" && parsed.message) {
@@ -271,9 +273,8 @@ async function consolidateSingleSession(
   let pass2Ok = false;
   try {
     const { provider, model } = resolveSessionModelRef(cfg, entry, agentId);
-    const { runConsolidationTurn } = await import(
-      "../../auto-reply/reply/agent-runner-consolidation.js"
-    );
+    const { runConsolidationTurn } =
+      await import("../../auto-reply/reply/agent-runner-consolidation.js");
     await runConsolidationTurn({
       cfg,
       provider,
@@ -291,17 +292,12 @@ async function consolidateSingleSession(
   }
 
   // ── Session reset (archive transcript + wipe) ──
-  const hookEvent = createInternalHookEvent(
-    "command",
-    "reset",
-    target.canonicalKey ?? key,
-    {
-      sessionEntry: entry,
-      previousSessionEntry: entry,
-      commandSource: "cli:session.consolidate",
-      cfg,
-    },
-  );
+  const hookEvent = createInternalHookEvent("command", "reset", target.canonicalKey ?? key, {
+    sessionEntry: entry,
+    previousSessionEntry: entry,
+    commandSource: "cli:session.consolidate",
+    cfg,
+  });
   await triggerInternalHook(hookEvent);
 
   await ensureSessionRuntimeCleanup({
@@ -766,19 +762,25 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       const { store } = loadCombinedSessionStoreForGateway(cfg);
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
       const activeKeys = Object.entries(store)
-        .filter(
-          ([, entry]) =>
-            entry?.sessionId && (entry.updatedAt ?? 0) > cutoff,
-        )
+        .filter(([, entry]) => entry?.sessionId && (entry.updatedAt ?? 0) > cutoff)
         .map(([key]) => key);
 
       if (activeKeys.length === 0) {
-        respond(true, { ok: true, sessions: [], message: "No active sessions to consolidate" }, undefined);
+        respond(
+          true,
+          { ok: true, sessions: [], message: "No active sessions to consolidate" },
+          undefined,
+        );
         return;
       }
 
       logVerbose(`session.consolidate: --all: found ${activeKeys.length} active session(s)`);
-      const results: Array<{ key: string; pass1Messages: number; pass2Ok: boolean; error?: string }> = [];
+      const results: Array<{
+        key: string;
+        pass1Messages: number;
+        pass2Ok: boolean;
+        error?: string;
+      }> = [];
 
       for (const sessionKey of activeKeys) {
         try {

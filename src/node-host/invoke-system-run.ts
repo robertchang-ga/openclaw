@@ -17,7 +17,6 @@ import {
   type ExecAsk,
   type ExecCommandSegment,
   type ExecSecurity,
-  type HostExecBinRule,
   type SkillBinTrustEntry,
 } from "../infra/exec-approvals.js";
 import type { ExecHostRequest, ExecHostResponse, ExecHostRunResult } from "../infra/exec-host.js";
@@ -535,7 +534,12 @@ async function evaluateSystemRunPolicyPhase(
   // Fail closed if policy/runtime drift re-allows unapproved shell wrappers.
   // Skip this check when hostExecBins override is active — those are explicitly
   // trusted by the user and bypass the normal approval flow.
-  if (security === "allowlist" && parsed.shellCommand && !policy.approvedByAsk && !hostExecBinsOverride) {
+  if (
+    security === "allowlist" &&
+    parsed.shellCommand &&
+    !policy.approvedByAsk &&
+    !hostExecBinsOverride
+  ) {
     await sendSystemRunDenied(opts, parsed.execution, {
       reason: "approval-required",
       message: "SYSTEM_RUN_DENIED: approval required",

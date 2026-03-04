@@ -73,4 +73,3 @@ export function addGatewayAllowlistCommands(cmd: Command): Command {
 
   return allowlist;
 }
-

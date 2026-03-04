@@ -226,7 +226,9 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       // TODO: eliminate auth.json dependency entirely — ModelRegistry should read
       // from auth-profiles.json natively instead of requiring the legacy bridge.
       if (process.env.OPENCLAW_SECURE_MODE === "1") {
-        log.info("Compaction: no API key from ModelRegistry, but secure mode proxy will inject credentials.");
+        log.info(
+          "Compaction: no API key from ModelRegistry, but secure mode proxy will inject credentials.",
+        );
       } else {
         console.warn(
           "Compaction safeguard: no API key available; cancelling compaction to preserve history.",

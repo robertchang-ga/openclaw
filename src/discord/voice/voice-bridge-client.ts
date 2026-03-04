@@ -31,11 +31,7 @@ export type VoiceBridgeClientOptions = {
   /** Called when a user starts speaking (for playback interruption) */
   onSpeechStart?: (event: { guildId: string; channelId: string }) => void;
   /** Called when a voice session is disconnected */
-  onSessionDisconnected?: (event: {
-    guildId: string;
-    channelId: string;
-    reason?: string;
-  }) => void;
+  onSessionDisconnected?: (event: { guildId: string; channelId: string; reason?: string }) => void;
 };
 
 export class VoiceBridgeClient {
@@ -58,7 +54,9 @@ export class VoiceBridgeClient {
   // ─── Connection Management ─────────────────────────────────
 
   connect(): void {
-    if (this.destroyed) return;
+    if (this.destroyed) {
+      return;
+    }
     this.connectWs();
   }
 
@@ -75,7 +73,9 @@ export class VoiceBridgeClient {
   }
 
   private connectWs(): void {
-    if (this.destroyed) return;
+    if (this.destroyed) {
+      return;
+    }
 
     logger.info(`Connecting to voice sidecar: ${this.wsUrl}`);
     const ws = new WebSocket(this.wsUrl);
@@ -87,7 +87,13 @@ export class VoiceBridgeClient {
 
     ws.on("message", (data) => {
       try {
-        const event: VoiceBridgeEvent = JSON.parse(data.toString());
+        // RawData = Buffer | ArrayBuffer | Buffer[] — convert each case to string
+        const raw = Buffer.isBuffer(data)
+          ? data.toString("utf8")
+          : Array.isArray(data)
+            ? Buffer.concat(data as Buffer[]).toString("utf8")
+            : Buffer.from(data).toString("utf8");
+        const event: VoiceBridgeEvent = JSON.parse(raw);
         this.handleEvent(event);
       } catch (err) {
         logger.warn(`Invalid sidecar event: ${String(err)}`);
@@ -108,7 +114,9 @@ export class VoiceBridgeClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.destroyed || this.reconnectTimer) return;
+    if (this.destroyed || this.reconnectTimer) {
+      return;
+    }
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -128,9 +136,7 @@ export class VoiceBridgeClient {
         this.options.onSessionDisconnected?.(event);
         break;
       case "session_connected":
-        logger.info(
-          `Voice session connected: guild ${event.guildId} channel ${event.channelId}`,
-        );
+        logger.info(`Voice session connected: guild ${event.guildId} channel ${event.channelId}`);
         break;
       case "send_voice_payload":
         this.onSendVoicePayload?.(event.payload);

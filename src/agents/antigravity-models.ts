@@ -60,9 +60,7 @@ function parseGoogleToken(apiKey: string): string {
  * Mirrors the logic in provider-usage.auth.ts but kept self-contained
  * so the discovery module has no circular dependency on the usage layer.
  */
-async function resolveAntigravityToken(
-  agentDir?: string,
-): Promise<string | null> {
+async function resolveAntigravityToken(agentDir?: string): Promise<string | null> {
   const cfg = loadConfig();
   const store = ensureAuthProfileStore(agentDir, {
     allowKeychainPrompt: false,
@@ -202,7 +200,7 @@ export async function discoverAntigravityModels(params?: {
       clearTimeout(timer);
     }
   } catch (err) {
-    log.debug(`Antigravity model discovery failed: ${err}`);
+    log.debug(`Antigravity model discovery failed: ${String(err)}`);
     return [];
   }
 }
