@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
 # libcrypto (libssl3), zlib, and zstd are pulled in by the kroko binary
 RUN apt-get update \

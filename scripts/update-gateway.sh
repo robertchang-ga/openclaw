@@ -66,7 +66,7 @@ cp transcript-cleaner.js "$PLUGIN_DIR/transcript-cleaner.js"
 echo "==> Building Docker images (cached)..."
 docker build -t openclaw-gateway .
 docker build -f Dockerfile.voice-sidecar -t openclaw-voice-sidecar:latest .
-docker build -f Dockerfile.kroko -t kroko:local .
+docker compose build kroko
 docker compose build cognee
 
 if $FULL; then
@@ -76,6 +76,6 @@ fi
 
 echo "==> Restarting services..."
 sudo systemctl restart openclaw-gateway
-docker compose up -d cognee
+docker compose up -d kroko cognee
 
 echo "==> Done! Gateway restarted, Cognee rebuilt (sidecars auto-started by gateway)."
