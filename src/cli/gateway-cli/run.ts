@@ -13,12 +13,12 @@ import {
   readConfigFileSnapshot,
   resolveStateDir,
   resolveGatewayPort,
-  type OpenClawConfig,
 } from "../../config/config.js";
 import {
   prepareSanitizedMounts,
   cleanupSanitizedMounts,
 } from "../../config/prepare-sanitized-mounts.js";
+import { resolveDiscordToken } from "../../discord/token.js";
 import { resolveGatewayAuth } from "../../gateway/auth.js";
 import { startGatewayServer } from "../../gateway/server.js";
 import type { GatewayWsLogStyle } from "../../gateway/ws-logging.js";
@@ -37,7 +37,6 @@ import {
   getGatewayContainerLogs,
   type GatewayContainerOptions,
 } from "../../security/gateway-container.js";
-import { resolveDiscordToken } from "../../discord/token.js";
 import { loadProxyPort } from "../../security/secrets-proxy-allowlist.js";
 import { startSecretsProxy, generateProxyAuthToken } from "../../security/secrets-proxy.js";
 import { createSecretsRegistry } from "../../security/secrets-registry.js";
@@ -90,10 +89,12 @@ function resolveSidecars(cfg: ReturnType<typeof loadConfig>): string[] {
     sidecars.push("cognee");
   }
 
-  // Speaches STT for Discord voice
+  // STT sidecar for Discord voice (speaches or kroko)
   const voice = cfg.channels?.discord?.voice as Record<string, unknown> | undefined;
   if (voice?.enabled) {
-    sidecars.push("speaches");
+    const stt = voice.stt as Record<string, unknown> | undefined;
+    const sttProvider = (stt?.provider as string | undefined) ?? "speaches";
+    sidecars.push(sttProvider === "kroko" ? "kroko" : "speaches");
   }
 
   gatewayLog.info(`Resolved sidecars: [${sidecars.join(", ")}]`);
@@ -104,7 +105,9 @@ function resolveVoiceSidecarConfig(
   cfg: ReturnType<typeof loadConfig>,
 ): GatewayContainerOptions["voiceSidecar"] {
   const voice = cfg.channels?.discord?.voice as Record<string, unknown> | undefined;
-  if (!voice?.enabled) return undefined;
+  if (!voice?.enabled) {
+    return undefined;
+  }
 
   const { token } = resolveDiscordToken(cfg);
   if (!token) {
@@ -112,11 +115,19 @@ function resolveVoiceSidecarConfig(
     return undefined;
   }
 
+  const stt = voice.stt as Record<string, unknown> | undefined;
+  const sttProvider = ((stt?.provider as string | undefined) ?? "speaches") as "speaches" | "kroko";
+  const krokoConfig = stt?.kroko as Record<string, unknown> | undefined;
+
   return {
     discordToken: token,
     daveEncryption: voice.daveEncryption as boolean | undefined,
     whisperModel: (voice.whisperModel ?? voice.model) as string | undefined,
-    language: voice.language as string | undefined,
+    language: (krokoConfig?.language ?? voice.language) as string | undefined,
+    sttProvider,
+    // In Docker, kroko is always reachable at ws://kroko:6006 (compose DNS)
+    krokoUrl: "ws://kroko:6006",
+    krokoApiKey: krokoConfig?.apiKey as string | undefined,
   };
 }
 

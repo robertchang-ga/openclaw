@@ -29,6 +29,7 @@ import {
   type DiscordGatewayAdapterLibraryMethods,
 } from "@discordjs/voice";
 import { WebSocketServer, WebSocket } from "ws";
+import { KrokoSTT, resample48kStereoTo16kMonoFloat32 } from "./kroko-stt.js";
 import { RealtimeSTT, resample48kStereoTo24kMono } from "./realtime-stt.js";
 import type {
   VoiceBridgeConfig,
@@ -102,7 +103,7 @@ type VoiceSession = {
   player: AudioPlayer;
   playbackQueue: Promise<void>;
   activeSpeakers: Set<string>;
-  realtimeSTT: RealtimeSTT | null;
+  realtimeSTT: RealtimeSTT | KrokoSTT | null;
   decryptFailureCount: number;
   lastDecryptFailureAt: number;
   decryptRecoveryInFlight: boolean;
@@ -425,52 +426,65 @@ export class VoiceBridgeServer {
       },
     };
 
-    // Set up realtime STT
-    const stt = new RealtimeSTT({
-      url: this.config.speachesUrl,
-      model: this.config.whisperModel,
-      language: this.config.language,
-      onTranscript: (text: string) => {
-        const speakerId = session.lastSpeakerId;
-        log.info(
-          `transcript (${text.length} chars): guild ${guildId} user ${speakerId ?? "unknown"}`,
-        );
+    // Shared STT callbacks — same logic regardless of provider
+    const onSttTranscript = (text: string) => {
+      const speakerId = session.lastSpeakerId;
+      log.info(
+        `transcript (${text.length} chars): guild ${guildId} user ${speakerId ?? "unknown"}`,
+      );
 
-        // Debounce transcripts (same logic as manager.ts)
-        session.pendingTranscripts = session.pendingTranscripts ?? [];
-        session.pendingTranscripts.push({ text, speakerId });
-        if (session.transcriptDebounceTimer) {
-          clearTimeout(session.transcriptDebounceTimer);
+      // Debounce transcripts (same logic as manager.ts)
+      session.pendingTranscripts = session.pendingTranscripts ?? [];
+      session.pendingTranscripts.push({ text, speakerId });
+      if (session.transcriptDebounceTimer) {
+        clearTimeout(session.transcriptDebounceTimer);
+      }
+      session.transcriptDebounceTimer = setTimeout(() => {
+        const pending = session.pendingTranscripts ?? [];
+        session.pendingTranscripts = [];
+        session.transcriptDebounceTimer = null;
+        if (pending.length === 0) {
+          return;
         }
-        session.transcriptDebounceTimer = setTimeout(() => {
-          const pending = session.pendingTranscripts ?? [];
-          session.pendingTranscripts = [];
-          session.transcriptDebounceTimer = null;
-          if (pending.length === 0) {
-            return;
-          }
 
-          const mergedText = pending.map((p) => p.text).join(" ");
-          const lastSpeaker = pending[pending.length - 1].speakerId;
-          log.info(`debounced transcript (${mergedText.length} chars, ${pending.length} segments)`);
+        const mergedText = pending.map((p) => p.text).join(" ");
+        const lastSpeaker = pending[pending.length - 1].speakerId;
+        log.info(`debounced transcript (${mergedText.length} chars, ${pending.length} segments)`);
 
-          this.emitEvent({
-            type: "transcript",
-            guildId,
-            channelId,
-            text: mergedText,
-            userId: lastSpeaker,
+        this.emitEvent({
+          type: "transcript",
+          guildId,
+          channelId,
+          text: mergedText,
+          userId: lastSpeaker,
+        });
+      }, 1000);
+    };
+    const onSttSpeechStart = () => {
+      // Interrupt playback when user starts speaking
+      if (session.player.state.status === AudioPlayerStatus.Playing) {
+        session.player.stop(true);
+      }
+      this.emitEvent({ type: "speech_start", guildId, channelId });
+    };
+
+    // Set up STT — Kroko or Speaches depending on config
+    const stt: RealtimeSTT | KrokoSTT =
+      this.config.sttProvider === "kroko"
+        ? new KrokoSTT({
+            url: this.config.krokoUrl ?? "ws://kroko:6006",
+            language: this.config.language,
+            apiKey: this.config.krokoApiKey,
+            onTranscript: onSttTranscript,
+            onSpeechStart: onSttSpeechStart,
+          })
+        : new RealtimeSTT({
+            url: this.config.speachesUrl,
+            model: this.config.whisperModel,
+            language: this.config.language,
+            onTranscript: onSttTranscript,
+            onSpeechStart: onSttSpeechStart,
           });
-        }, 1000);
-      },
-      onSpeechStart: () => {
-        // Interrupt playback when user starts speaking
-        if (session.player.state.status === AudioPlayerStatus.Playing) {
-          session.player.stop(true);
-        }
-        this.emitEvent({ type: "speech_start", guildId, channelId });
-      },
-    });
     session.realtimeSTT = stt;
 
     stt.connect().catch((err) => {
@@ -504,8 +518,12 @@ export class VoiceBridgeServer {
         try {
           const pcm48k = opusDecoder.decoder.decode(chunk);
           if (pcm48k && pcm48k.length > 0) {
-            const pcm24k = resample48kStereoTo24kMono(Buffer.from(pcm48k));
-            stt.feedAudio(pcm24k);
+            // Kroko expects 16kHz float32; Speaches expects 24kHz S16LE
+            const pcmReady =
+              this.config.sttProvider === "kroko"
+                ? resample48kStereoTo16kMonoFloat32(Buffer.from(pcm48k))
+                : resample48kStereoTo24kMono(Buffer.from(pcm48k));
+            stt.feedAudio(pcmReady);
           }
         } catch {
           // Decode errors on individual packets are normal

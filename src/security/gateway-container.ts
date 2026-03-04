@@ -54,10 +54,16 @@ export type GatewayContainerOptions = {
     discordToken: string;
     /** DAVE encryption toggle */
     daveEncryption?: boolean;
-    /** Whisper model name */
+    /** Whisper model name (speaches only) */
     whisperModel?: string;
     /** Language hint for STT */
     language?: string;
+    /** STT provider: "speaches" (default) or "kroko" */
+    sttProvider?: "speaches" | "kroko";
+    /** Kroko STT WebSocket URL (Docker DNS: ws://kroko:6006) */
+    krokoUrl?: string;
+    /** Kroko API key (optional) */
+    krokoApiKey?: string;
   };
 };
 
@@ -229,6 +235,9 @@ async function startVoiceSidecarContainer(opts: {
   daveEncryption?: boolean;
   whisperModel?: string;
   language?: string;
+  sttProvider?: "speaches" | "kroko";
+  krokoUrl?: string;
+  krokoApiKey?: string;
 }): Promise<void> {
   // Remove any existing sidecar
   try {
@@ -250,9 +259,13 @@ async function startVoiceSidecarContainer(opts: {
     // Discord bot token for voice gateway
     "-e",
     `DISCORD_BOT_TOKEN=${opts.discordToken}`,
-    // Speaches STT URL (accessible via Docker DNS on openclaw-secure-net)
+    // STT provider + URL (accessible via Docker DNS on openclaw-secure-net)
     "-e",
-    "SPEACHES_URL=ws://speaches:8000/v1/realtime",
+    `STT_PROVIDER=${opts.sttProvider ?? "speaches"}`,
+    "-e",
+    opts.sttProvider === "kroko"
+      ? `KROKO_URL=${opts.krokoUrl ?? "ws://kroko:6006"}`
+      : "SPEACHES_URL=ws://speaches:8000/v1/realtime",
     "-e",
     `VOICE_BRIDGE_PORT=${VOICE_BRIDGE_DEFAULT_PORT}`,
   ];
@@ -262,6 +275,9 @@ async function startVoiceSidecarContainer(opts: {
   }
   if (opts.language) {
     args.push("-e", `VOICE_LANGUAGE=${opts.language}`);
+  }
+  if (opts.krokoApiKey) {
+    args.push("-e", `KROKO_API_KEY=${opts.krokoApiKey}`);
   }
   if (opts.daveEncryption === false) {
     args.push("-e", "DAVE_ENCRYPTION=false");

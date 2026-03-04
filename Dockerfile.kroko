@@ -1,0 +1,19 @@
+FROM debian:bookworm-slim
+
+# libcrypto (libssl3), zlib, and zstd are pulled in by the kroko binary
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libssl3 zlib1g libzstd1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Binary and its bundled onnxruntime shared library
+COPY kroko-onnx/build/bin/kroko-onnx-online-websocket-server /usr/local/bin/kroko
+COPY kroko-onnx/build/_deps/onnxruntime-src/lib/libonnxruntime.so /usr/local/lib/
+RUN ldconfig
+
+# Model is volume-mounted at runtime
+ENV KROKO_PORT=6006
+ENV KROKO_MODEL=/models/model.data
+
+EXPOSE 6006
+
+CMD ["/bin/sh", "-c", "exec /usr/local/bin/kroko --port=${KROKO_PORT} --model=${KROKO_MODEL}"]

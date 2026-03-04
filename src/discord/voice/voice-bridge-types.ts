@@ -146,9 +146,15 @@ export type VoiceBridgeConfig = {
   port: number;
   /** Discord bot token (placeholder in secure mode) */
   discordToken: string;
-  /** Speaches WebSocket URL for realtime STT */
+  /** STT provider: "speaches" (default) or "kroko" */
+  sttProvider?: "speaches" | "kroko";
+  /** Speaches WebSocket URL for realtime STT (used when sttProvider is "speaches") */
   speachesUrl: string;
-  /** Whisper model name */
+  /** Kroko STT WebSocket URL (used when sttProvider is "kroko") */
+  krokoUrl?: string;
+  /** Kroko API key (optional) */
+  krokoApiKey?: string;
+  /** Whisper model name (speaches only) */
   whisperModel: string;
   /** Language hint for STT */
   language?: string;

@@ -66,6 +66,7 @@ cp transcript-cleaner.js "$PLUGIN_DIR/transcript-cleaner.js"
 echo "==> Building Docker images (cached)..."
 docker build -t openclaw-gateway .
 docker build -f Dockerfile.voice-sidecar -t openclaw-voice-sidecar:latest .
+docker build -f Dockerfile.kroko -t kroko:local .
 docker compose build cognee
 
 if $FULL; then
