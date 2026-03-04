@@ -4,6 +4,7 @@ import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import type { MemoryCitationsMode } from "../config/types.memory.js";
 import { listDeliverableMessageChannels } from "../utils/message-channel.js";
 import type { ResolvedTimeFormat } from "./date-time.js";
+import { formatUserTimeCompact } from "./date-time.js";
 import type { EmbeddedContextFile } from "./pi-embedded-helpers.js";
 import type { EmbeddedSandboxInfo } from "./pi-embedded-runner/types.js";
 import { sanitizeForPromptLiteral } from "./sanitize-for-prompt.js";
@@ -97,7 +98,12 @@ function buildTimeSection(params: { userTimezone?: string }) {
   if (!params.userTimezone) {
     return [];
   }
-  return ["## Current Date & Time", `Time zone: ${params.userTimezone}`, ""];
+  const time = formatUserTimeCompact(new Date(), params.userTimezone);
+  return [
+    "## Current Date & Time",
+    time ? `Now: ${time}` : `Time zone: ${params.userTimezone}`,
+    "",
+  ];
 }
 
 function buildReplyTagsSection(isMinimal: boolean) {

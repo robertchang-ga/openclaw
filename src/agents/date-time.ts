@@ -155,6 +155,34 @@ function ordinalSuffix(day: number): string {
   }
 }
 
+export function formatUserTimeCompact(date: Date, timeZone: string): string | undefined {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      weekday: "short",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZoneName: "short",
+    }).formatToParts(date);
+    const map: Record<string, string> = {};
+    for (const part of parts) {
+      if (part.type !== "literal") {
+        map[part.type] = part.value;
+      }
+    }
+    if (!map.weekday || !map.year || !map.month || !map.day || !map.hour || !map.minute) {
+      return undefined;
+    }
+    return `${map.weekday} ${map.year}-${map.month}-${map.day} ${map.hour}:${map.minute} ${map.timeZoneName ?? timeZone}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export function formatUserTime(
   date: Date,
   timeZone: string,

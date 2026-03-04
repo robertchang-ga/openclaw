@@ -370,7 +370,7 @@ describe("applyMinimaxApiConfig", () => {
 
   it("does not set reasoning for non-reasoning models", () => {
     const cfg = applyMinimaxApiConfig({}, "MiniMax-M2.1");
-    expect(cfg.models?.providers?.minimax?.models[0]?.reasoning).toBe(false);
+    expect(cfg.models?.providers?.minimax?.models![0]?.reasoning).toBe(false);
   });
 
   it("preserves existing model params when adding alias", () => {
@@ -405,7 +405,7 @@ describe("applyMinimaxApiConfig", () => {
     expect(cfg.models?.providers?.minimax?.baseUrl).toBe("https://api.minimax.io/anthropic");
     expect(cfg.models?.providers?.minimax?.api).toBe("anthropic-messages");
     expect(cfg.models?.providers?.minimax?.apiKey).toBe("old-key");
-    expect(cfg.models?.providers?.minimax?.models.map((m) => m.id)).toEqual([
+    expect(cfg.models?.providers?.minimax?.models!.map((m) => m.id)).toEqual([
       "old-model",
       "MiniMax-M2.5",
     ]);
@@ -501,7 +501,7 @@ describe("applySyntheticConfig", () => {
     expect(cfg.models?.providers?.synthetic?.baseUrl).toBe("https://api.synthetic.new/anthropic");
     expect(cfg.models?.providers?.synthetic?.api).toBe("anthropic-messages");
     expect(cfg.models?.providers?.synthetic?.apiKey).toBe("old-key");
-    const ids = cfg.models?.providers?.synthetic?.models.map((m) => m.id);
+    const ids = cfg.models?.providers?.synthetic?.models!.map((m) => m.id);
     expect(ids).toContain("old-model");
     expect(ids).toContain(SYNTHETIC_DEFAULT_MODEL_ID);
   });
@@ -553,7 +553,7 @@ describe("applyXiaomiConfig", () => {
     expect(cfg.models?.providers?.xiaomi?.baseUrl).toBe("https://api.xiaomimimo.com/anthropic");
     expect(cfg.models?.providers?.xiaomi?.api).toBe("anthropic-messages");
     expect(cfg.models?.providers?.xiaomi?.apiKey).toBe("old-key");
-    expect(cfg.models?.providers?.xiaomi?.models.map((m) => m.id)).toEqual([
+    expect(cfg.models?.providers?.xiaomi?.models!.map((m) => m.id)).toEqual([
       "custom-model",
       "mimo-v2-flash",
     ]);
@@ -585,7 +585,10 @@ describe("applyXaiProviderConfig", () => {
     expect(cfg.models?.providers?.xai?.baseUrl).toBe("https://api.x.ai/v1");
     expect(cfg.models?.providers?.xai?.api).toBe("openai-completions");
     expect(cfg.models?.providers?.xai?.apiKey).toBe("old-key");
-    expect(cfg.models?.providers?.xai?.models.map((m) => m.id)).toEqual(["custom-model", "grok-4"]);
+    expect(cfg.models?.providers?.xai?.models!.map((m) => m.id)).toEqual([
+      "custom-model",
+      "grok-4",
+    ]);
   });
 });
 
@@ -616,11 +619,11 @@ describe("applyMistralProviderConfig", () => {
     expect(cfg.models?.providers?.mistral?.baseUrl).toBe("https://api.mistral.ai/v1");
     expect(cfg.models?.providers?.mistral?.api).toBe("openai-completions");
     expect(cfg.models?.providers?.mistral?.apiKey).toBe("old-key");
-    expect(cfg.models?.providers?.mistral?.models.map((m) => m.id)).toEqual([
+    expect(cfg.models?.providers?.mistral?.models!.map((m) => m.id)).toEqual([
       "custom-model",
       "mistral-large-latest",
     ]);
-    const mistralDefault = cfg.models?.providers?.mistral?.models.find(
+    const mistralDefault = cfg.models?.providers?.mistral?.models!.find(
       (model) => model.id === "mistral-large-latest",
     );
     expect(mistralDefault?.contextWindow).toBe(262144);
@@ -712,7 +715,7 @@ describe("applyLitellmProviderConfig", () => {
     expect(cfg.models?.providers?.litellm?.baseUrl).toBe("https://litellm.example/v1");
     expect(cfg.models?.providers?.litellm?.api).toBe("openai-completions");
     expect(cfg.models?.providers?.litellm?.apiKey).toBe("old-key");
-    expect(cfg.models?.providers?.litellm?.models.map((m) => m.id)).toEqual([
+    expect(cfg.models?.providers?.litellm?.models!.map((m) => m.id)).toEqual([
       "custom-model",
       "claude-opus-4-6",
     ]);
