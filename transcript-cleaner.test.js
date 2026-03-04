@@ -1,5 +1,6 @@
-import { describe, it } from "node:test";
+/* eslint-disable @typescript-eslint/no-floating-promises -- node:test describe/it return Promises */
 import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 import {
   buildChain,
   stripContentNoise,
@@ -48,9 +49,9 @@ describe("buildChain", () => {
     assert.strictEqual(result.length, 3);
     assert.strictEqual(result[0].id, "root");
     // Both branches should be present
-    const ids = result.map((e) => e.id);
-    assert(ids.includes("branch1"));
-    assert(ids.includes("branch2"));
+    const ids = new Set(result.map((e) => e.id));
+    assert(ids.has("branch1"));
+    assert(ids.has("branch2"));
   });
 
   it("marks orphaned entries with _orphaned flag", () => {
@@ -67,9 +68,7 @@ describe("buildChain", () => {
   });
 
   it("handles entries without id (no crash)", () => {
-    const entries = [
-      { type: "message", message: { role: "user", content: "test" } },
-    ];
+    const entries = [{ type: "message", message: { role: "user", content: "test" } }];
     const result = buildChain(entries);
     assert.strictEqual(result.length, 1);
   });
@@ -86,10 +85,7 @@ describe("extractTextContent", () => {
   });
 
   it("extracts string content", () => {
-    assert.strictEqual(
-      extractTextContent({ content: "hello world" }),
-      "hello world",
-    );
+    assert.strictEqual(extractTextContent({ content: "hello world" }), "hello world");
   });
 
   it("extracts text parts from array content", () => {
@@ -109,9 +105,7 @@ describe("extractTextContent", () => {
 
   it("extracts tool_result with string content", () => {
     const message = {
-      content: [
-        { type: "tool_result", content: "file contents here" },
-      ],
+      content: [{ type: "tool_result", content: "file contents here" }],
     };
     assert.strictEqual(extractTextContent(message), "file contents here");
   });
@@ -133,9 +127,7 @@ describe("extractTextContent", () => {
 
   it("ignores tool_use parts (handled separately)", () => {
     const message = {
-      content: [
-        { type: "tool_use", name: "write_file", input: {} },
-      ],
+      content: [{ type: "tool_use", name: "write_file", input: {} }],
     };
     assert.strictEqual(extractTextContent(message), "");
   });

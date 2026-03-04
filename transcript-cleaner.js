@@ -14,20 +14,14 @@
  */
 
 import fs from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
-const CLEANSED_SESSIONS_DIR = join(
-  homedir(),
-  ".openclaw",
-  "workspace",
-  ".staging",
-  "sessions"
-);
+const CLEANSED_SESSIONS_DIR = join(homedir(), ".openclaw", "workspace", ".staging", "sessions");
 
 /** Entry types to skip entirely (non-message metadata). */
 const SKIP_TYPES = new Set([
@@ -39,7 +33,7 @@ const SKIP_TYPES = new Set([
 ]);
 
 /** Metadata fields to strip from entries. */
-const METADATA_FIELDS = [
+const _METADATA_FIELDS = [
   "textSignature",
   "thoughtSignature",
   "usage",
@@ -85,11 +79,30 @@ const CONTENT_NOISE_PATTERNS = [
 
 /** Tool names whose output is ephemeral (scaffolding, not significant). */
 const EPHEMERAL_TOOLS = new Set([
-  "read_file", "read", "view_file", "list_dir", "find_file", "cat", "ls", "pwd",
-  "get_config", "check_config", "read_config",
-  "which", "type", "where", "file",
-  "web_search", "web_fetch", "fetch", "search", "brave_search",
-  "memory_search", "memory_get", "cognee_search", "cognee_datasets",
+  "read_file",
+  "read",
+  "view_file",
+  "list_dir",
+  "find_file",
+  "cat",
+  "ls",
+  "pwd",
+  "get_config",
+  "check_config",
+  "read_config",
+  "which",
+  "type",
+  "where",
+  "file",
+  "web_search",
+  "web_fetch",
+  "fetch",
+  "search",
+  "brave_search",
+  "memory_search",
+  "memory_get",
+  "cognee_search",
+  "cognee_datasets",
 ]);
 
 /**
@@ -99,7 +112,9 @@ const EPHEMERAL_TOOLS = new Set([
 function formatEntryTime(ts) {
   try {
     const d = typeof ts === "number" ? new Date(ts) : new Date(ts);
-    if (isNaN(d.getTime())) return "";
+    if (isNaN(d.getTime())) {
+      return "";
+    }
     const h = d.getUTCHours().toString().padStart(2, "0");
     const m = d.getUTCMinutes().toString().padStart(2, "0");
     return `[${h}:${m} UTC] `;
@@ -120,7 +135,9 @@ async function parseJsonlFile(filePath) {
   const entries = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (!trimmed) {
+      continue;
+    }
     try {
       entries.push(JSON.parse(trimmed));
     } catch {
@@ -136,31 +153,37 @@ async function parseJsonlFile(filePath) {
  * Orphaned entries (broken parentId) are appended at the end with a marker.
  */
 function buildChain(entries) {
-  if (entries.length === 0) return [];
+  if (entries.length === 0) {
+    return [];
+  }
 
   // Build lookup maps
   const byId = new Map();
   const childrenOf = new Map(); // parentId → [entry]
   for (const entry of entries) {
-    if (entry.id) byId.set(entry.id, entry);
+    if (entry.id) {
+      byId.set(entry.id, entry);
+    }
     const pid = entry.parentId;
     if (pid) {
-      if (!childrenOf.has(pid)) childrenOf.set(pid, []);
+      if (!childrenOf.has(pid)) {
+        childrenOf.set(pid, []);
+      }
       childrenOf.get(pid).push(entry);
     }
   }
 
   // Find root: entry whose parentId is missing or not in the file
-  const roots = entries.filter(
-    (e) => !e.parentId || !byId.has(e.parentId)
-  );
+  const roots = entries.filter((e) => !e.parentId || !byId.has(e.parentId));
 
   // Walk from root(s) in order
   const visited = new Set();
   const ordered = [];
 
   function walk(entry) {
-    if (!entry || visited.has(entry.id)) return;
+    if (!entry || visited.has(entry.id)) {
+      return;
+    }
     visited.add(entry.id);
     ordered.push(entry);
     // Follow children (main branch = last child for retries)
@@ -189,7 +212,7 @@ function buildChain(entries) {
 
   if (orphans.length > 0) {
     console.warn(
-      `[transcript-cleaner] ${orphans.length} orphaned entries found (broken parentId chain)`
+      `[transcript-cleaner] ${orphans.length} orphaned entries found (broken parentId chain)`,
     );
   }
 
@@ -201,8 +224,12 @@ function buildChain(entries) {
  * Handles both string content and array-of-parts content.
  */
 function extractTextContent(message) {
-  if (!message?.content) return "";
-  if (typeof message.content === "string") return message.content;
+  if (!message?.content) {
+    return "";
+  }
+  if (typeof message.content === "string") {
+    return message.content;
+  }
   if (Array.isArray(message.content)) {
     const parts = [];
     for (const part of message.content) {
@@ -214,7 +241,9 @@ function extractTextContent(message) {
           parts.push(part.content);
         } else if (Array.isArray(part.content)) {
           for (const sub of part.content) {
-            if (sub.type === "text" && sub.text) parts.push(sub.text);
+            if (sub.type === "text" && sub.text) {
+              parts.push(sub.text);
+            }
           }
         }
       }
@@ -249,7 +278,9 @@ function stripContentNoise(text) {
  * Check if an assistant message is empty (signature-only, no real text).
  */
 function isEmptyAssistantTurn(entry) {
-  if (entry.message?.role !== "assistant") return false;
+  if (entry.message?.role !== "assistant") {
+    return false;
+  }
   const text = extractTextContent(entry.message);
   return !text || text.trim().length === 0;
 }
@@ -261,7 +292,9 @@ function processEntry(entry) {
   const type = entry.type;
 
   // Skip non-message types
-  if (SKIP_TYPES.has(type)) return null;
+  if (SKIP_TYPES.has(type)) {
+    return null;
+  }
 
   // Handle compaction entries specially — preserve summary + timestamp
   if (type === "compaction") {
@@ -271,21 +304,29 @@ function processEntry(entry) {
   }
 
   // Skip entries without messages
-  if (type !== "message" || !entry.message) return null;
+  if (type !== "message" || !entry.message) {
+    return null;
+  }
 
   const message = entry.message;
   const role = message.role;
 
   // Skip empty assistant turns
-  if (role === "assistant" && isEmptyAssistantTurn(entry)) return null;
+  if (role === "assistant" && isEmptyAssistantTurn(entry)) {
+    return null;
+  }
 
   // Extract and clean text
   let text = extractTextContent(message);
   text = stripContentNoise(text);
 
-  if (!text && role !== "assistant") return null;
+  if (!text && role !== "assistant") {
+    return null;
+  }
   // Skip agent turns that are just "(no output)" or empty after cleaning
-  if (role === "assistant" && (!text || text.trim().toLowerCase() === "(no output)")) return null;
+  if (role === "assistant" && (!text || text.trim().toLowerCase() === "(no output)")) {
+    return null;
+  }
 
   // Format with speaker labels and timestamp
   const speaker = role === "user" ? "[User]" : "[Agent]";
@@ -340,7 +381,7 @@ function processEntry(entry) {
  */
 function generateSessionMeta(entries) {
   const firstEntry = entries.find((e) => e.timestamp || e.createdAt);
-  const lastEntry = [...entries].reverse().find((e) => e.timestamp || e.createdAt);
+  const lastEntry = [...entries].toReversed().find((e) => e.timestamp || e.createdAt);
 
   const startTime = firstEntry?.timestamp || firstEntry?.createdAt || new Date().toISOString();
   const endTime = lastEntry?.timestamp || lastEntry?.createdAt || startTime;
@@ -369,7 +410,9 @@ function generateSessionMeta(entries) {
  * E.g., 5× "[HH:MM UTC] [User]: Hey hey!" → single "[HH:MM UTC] [User]: Hey hey! (×5, until HH:MM UTC)"
  */
 function collapseConsecutiveDuplicates(fragments) {
-  if (fragments.length <= 1) return fragments;
+  if (fragments.length <= 1) {
+    return fragments;
+  }
 
   // Regex to parse "[HH:MM UTC] [Speaker]: text" lines
   const lineRe = /^\[(\d{2}:\d{2}) UTC\] (\[[^\]]+\]): (.+)$/s;
@@ -391,16 +434,22 @@ function collapseConsecutiveDuplicates(fragments) {
     // Look ahead for consecutive duplicates
     while (i + count < fragments.length) {
       const nextMatch = fragments[i + count].match(lineRe);
-      if (!nextMatch) break;
+      if (!nextMatch) {
+        break;
+      }
       const [, nextTime, nextSpeaker, nextText] = nextMatch;
-      if (nextSpeaker !== speaker || nextText.trim().toLowerCase() !== normalizedText) break;
+      if (nextSpeaker !== speaker || nextText.trim().toLowerCase() !== normalizedText) {
+        break;
+      }
       lastTime = nextTime;
       count++;
     }
 
     if (count >= 3) {
       // Collapse 3+ consecutive duplicates
-      result.push(`[${firstTime} UTC] ${speaker}: ${text.trim()} (×${count}, until ${lastTime} UTC)`);
+      result.push(
+        `[${firstTime} UTC] ${speaker}: ${text.trim()} (×${count}, until ${lastTime} UTC)`,
+      );
     } else {
       // Keep 1-2 as-is
       for (let j = 0; j < count; j++) {
@@ -517,9 +566,10 @@ export async function cleanseTranscript(sessionFilePath, options = {}) {
   // Write Pass 1 output
   await fs.writeFile(outputPath, result.markdown, "utf-8");
 
-  (log.info || log.log).call(log,
+  (log.info || log.log).call(
+    log,
     `[transcript-cleaner] Pass 1 complete: ${result.entryCount} entries → ` +
-      `${result.processedCount} fragments, ${result.orphanCount} orphans → ${outputPath}`
+      `${result.processedCount} fragments, ${result.orphanCount} orphans → ${outputPath}`,
   );
 
   return {
@@ -535,4 +585,11 @@ export async function cleanseTranscript(sessionFilePath, options = {}) {
 export default { cleanseTranscript };
 
 // Named exports for testing
-export { buildChain, stripContentNoise, processEntry, generateSessionMeta, isSignificantToolOutput, extractTextContent };
+export {
+  buildChain,
+  stripContentNoise,
+  processEntry,
+  generateSessionMeta,
+  isSignificantToolOutput,
+  extractTextContent,
+};
