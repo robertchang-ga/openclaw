@@ -15,10 +15,6 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 
 const logger = createSubsystemLogger("discord/voice");
 
-// 16kHz mono float32: 16000 samples/sec × 4 bytes/sample = 64000 bytes/sec
-const SILENCE_DURATION_MS = 300;
-const FLUSH_BYTES = Math.ceil((16000 * 4 * SILENCE_DURATION_MS) / 1000); // 19200 bytes
-
 // ─── Audio helper ─────────────────────────────────────────────────────────────
 
 /**
@@ -69,6 +65,7 @@ export class KrokoSTT {
   private connected = false;
   private destroyed = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastPartial = "";
 
   constructor(config: KrokoSTTConfig) {
     this.config = config;
@@ -112,8 +109,23 @@ export class KrokoSTT {
       });
 
       ws.addEventListener("message", (evt: MessageEvent) => {
+        const data = typeof evt.data === "string" ? evt.data : String(evt.data);
+        // Kroko sends a non-JSON "Done!" literal to signal stream termination.
+        // Emit the last partial as the final transcript if no JSON final arrived.
+        if (data === "Done!") {
+          const text = this.lastPartial.trim();
+          this.lastPartial = "";
+          if (text.length > 0) {
+            logger.info(
+              `kroko-stt: transcript from partial (${text.length} chars): "${text.slice(0, 80)}"`,
+            );
+            this.config.onTranscript(text);
+          } else {
+            logger.info("kroko-stt: Done! received, no transcript to emit");
+          }
+          return;
+        }
         try {
-          const data = typeof evt.data === "string" ? evt.data : String(evt.data);
           const msg = JSON.parse(data) as KrokoMessage;
           this.handleMessage(msg);
         } catch (err) {
@@ -134,6 +146,9 @@ export class KrokoSTT {
         if (!this.connected) {
           clearTimeout(connectTimeout);
           reject(new Error("kroko-stt: websocket connection error"));
+        } else {
+          // Node.js built-in WebSocket may not fire 'close' after 'error'; trigger reconnect.
+          this.scheduleReconnect();
         }
       });
     });
@@ -152,15 +167,15 @@ export class KrokoSTT {
   }
 
   /**
-   * Send 300ms of float32 silence to trigger server-side VAD end-of-speech detection.
+   * Signal end-of-speech to Kroko by sending the "Done" text frame.
+   * This triggers server-side finalization and produces a final transcript.
    */
   flushSilence(): void {
     if (!this.ws || !this.connected) {
       return;
     }
-    const silence = Buffer.alloc(FLUSH_BYTES); // all-zero float32 = silence
-    this.ws.send(silence as unknown as Uint8Array<ArrayBuffer>);
-    logger.info(`kroko-stt: flushed ${SILENCE_DURATION_MS}ms silence (${FLUSH_BYTES} bytes)`);
+    this.ws.send("Done");
+    logger.info("kroko-stt: sent Done (end-of-speech)");
   }
 
   /**
@@ -187,11 +202,13 @@ export class KrokoSTT {
 
   private handleMessage(msg: KrokoMessage): void {
     if (msg.type === "partial") {
-      logger.info(`kroko-stt: partial: "${(msg.text ?? "").slice(0, 40)}"`);
+      this.lastPartial = msg.text ?? "";
+      logger.info(`kroko-stt: partial: "${this.lastPartial.slice(0, 40)}"`);
       return;
     }
     if (msg.type === "final") {
       const text = (msg.text ?? "").trim();
+      this.lastPartial = ""; // clear — proper final arrived
       if (text.length > 0) {
         logger.info(`kroko-stt: transcript (${text.length} chars): "${text.slice(0, 80)}"`);
         this.config.onTranscript(text);
