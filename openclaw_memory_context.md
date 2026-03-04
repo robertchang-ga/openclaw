@@ -31,6 +31,7 @@ fact, name, decision, and relationship.
 A two-pass pipeline implemented in `clean_session_log.py`:
 
 **Pass 1 — Deterministic (free, fast):**
+
 - Strips `<cognee_memories>...</cognee_memories>` injection blocks (autoRecall inserts these at session start; re-ingesting them would create circular/duplicate graph nodes)
 - Removes `<function_calls>` / `<fnr>` XML scaffolding while preserving inner data content
 - Drops injected system prompt boilerplate
@@ -38,6 +39,7 @@ A two-pass pipeline implemented in `clean_session_log.py`:
 - Deduplicates near-identical consecutive turns within a sliding window
 
 **Pass 2 — LLM:**
+
 - Normalizes entity names (netsuite/NetSute/net suite → NetSuite, etc.)
 - Fixes unambiguous ASR errors from voice transcripts
 - Resolves clear pronoun references ("fix it" → "fix the NetSuite integration")

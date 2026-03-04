@@ -93,6 +93,7 @@ cognee cognify --dataset sessions
 ## Input format
 
 Each line in the `.jsonl` file should be a JSON object with at minimum:
+
 ```json
 {"role": "user", "content": "..."}
 {"role": "assistant", "content": "..."}
