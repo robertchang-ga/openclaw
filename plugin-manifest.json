@@ -20,12 +20,7 @@
       },
       "searchType": {
         "type": "string",
-        "enum": [
-          "GRAPH_COMPLETION",
-          "CHUNKS",
-          "SUMMARIES",
-          "TEMPORAL"
-        ],
+        "enum": ["GRAPH_COMPLETION", "CHUNKS", "SUMMARIES", "TEMPORAL"],
         "description": "Cognee search mode"
       },
       "maxResults": {

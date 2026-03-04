@@ -364,12 +364,12 @@ graph LR
 
 **Allowlist CLI** — manage which domains the proxy will forward to:
 
-| Command | Description |
-|---------|-------------|
-| `openclaw gateway allowlist list` | List all allowed proxy domains |
-| `openclaw gateway allowlist add <domain>` | Add a domain to the allowlist |
+| Command                                      | Description                        |
+| -------------------------------------------- | ---------------------------------- |
+| `openclaw gateway allowlist list`            | List all allowed proxy domains     |
+| `openclaw gateway allowlist add <domain>`    | Add a domain to the allowlist      |
 | `openclaw gateway allowlist remove <domain>` | Remove a domain from the allowlist |
-| `openclaw gateway allowlist port [value]` | Get or set the secrets proxy port |
+| `openclaw gateway allowlist port [value]`    | Get or set the secrets proxy port  |
 
 Details: [Security guide](https://docs.openclaw.ai/gateway/security) · [Trust model](https://trust.openclaw.ai)
 

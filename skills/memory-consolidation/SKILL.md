@@ -18,14 +18,18 @@ You can also be invoked **manually** after running `openclaw cognee consolidate`
 ## Pass 2 Instructions
 
 ### Level: `min`
+
 Entity normalization only:
+
 - Resolve usernames, abbreviations, and references to consistent names
 - Use the lookup table below for known entities
 - For unknown entities, use context to infer the correct name
 - If uncertain, keep the original text
 
 ### Level: `full` (default)
+
 Everything in `min`, plus:
+
 1. **Pronoun resolution** — replace ambiguous pronouns with concrete referents when clearly determinable
 2. **Narrative collapsing** — merge retry sequences into clean single narratives (e.g., "tried X, failed, tried X again, succeeded" → "tried X, initially failed, then succeeded")
 3. **Ambiguity preservation** — mark unclear spans with `[UNCLEAR: original text]`. **Never guess.**
@@ -38,6 +42,7 @@ Everything in `min`, plus:
    - When in doubt, keep the turn — err on the side of preserving information
 
 ### Entity Lookup Table
+
 ```json
 {
   "chik_delight": "Rob",
@@ -54,11 +59,13 @@ The cleaned transcript MUST preserve the existing YAML frontmatter block (`---` 
 ## Sleep Cycle Architecture
 
 The sleep cycle runs on three triggers:
+
 1. **Context overflow** — when the model rejects the prompt
 2. **Midnight EST** — nightly cron job
 3. **Manual `/reset` or `/new`** — via `before_reset` hook
 
 ### Steps (in order):
+
 1. **Pass 1 — Deterministic** (`before_reset` hook, blocking):
    - Session transcript cleansing via `transcript-cleaner.js` → `.staging/sessions/`
      - Per-turn timestamps: `[HH:MM UTC] [User]:` / `[HH:MM UTC] [Agent]:`
@@ -73,16 +80,18 @@ The sleep cycle runs on three triggers:
 3. **Reset session** — clean slate
 
 ### Directory Flow
-| Stage | Location | Contents |
-|---|---|---|
-| Staging (Pass 1 output) | `.staging/sessions/` | Frontmatted session transcripts |
-| Staging (Pass 1 output) | `.staging/meetings/` | Frontmatted Fireflies transcripts |
-| Final (Pass 2 output) | `memory/cleansed-sessions/` | LLM-cleaned session transcripts |
-| Final (Pass 2 output) | `memory/bpc_meetings/` | LLM-cleaned meeting transcripts |
-| Final (agent-written) | `memory/episodes/` | Episodic reflections |
-| Final (agent-appended) | `MEMORY.md` | Semantic memory |
+
+| Stage                   | Location                    | Contents                          |
+| ----------------------- | --------------------------- | --------------------------------- |
+| Staging (Pass 1 output) | `.staging/sessions/`        | Frontmatted session transcripts   |
+| Staging (Pass 1 output) | `.staging/meetings/`        | Frontmatted Fireflies transcripts |
+| Final (Pass 2 output)   | `memory/cleansed-sessions/` | LLM-cleaned session transcripts   |
+| Final (Pass 2 output)   | `memory/bpc_meetings/`      | LLM-cleaned meeting transcripts   |
+| Final (agent-written)   | `memory/episodes/`          | Episodic reflections              |
+| Final (agent-appended)  | `MEMORY.md`                 | Semantic memory                   |
 
 ### Key Principles
+
 - **Clean, don't summarize** — preserve the full conversation, just remove noise
 - **Preserve timestamps** — per-turn `[HH:MM UTC]` timestamps are critical for temporal awareness, never remove them
 - **Significant tool outputs stay** — if the agent scraped, queried, or generated something, keep it
@@ -108,23 +117,30 @@ trigger: user_request | scheduled_task | error_alert | context_overflow
 ---
 
 ## What Happened
+
 [Narrative description of the session]
 
 ## What Succeeded
+
 - [Key accomplishments]
 
 ## What Failed
+
 - [What didn't work and why]
 
 ## What's Pending
+
 - [ ] [Outstanding tasks]
 
 ## Key Decisions
+
 - [Important choices made and rationale]
 
 ## Tools & Artifacts
+
 - [What tools were used and what was produced]
 
 ## Context & Connections
+
 [How this session relates to previous work]
 ```
