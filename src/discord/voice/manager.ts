@@ -25,6 +25,7 @@ import {
 } from "@discordjs/voice";
 import { agentCommand } from "../../commands/agent.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import type { DiscordVoiceConfig } from "../../config/types.discord.js";
 import type { DiscordAccountConfig, TtsConfig } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
 import { onAgentEvent } from "../../infra/agent-events.js";
@@ -36,6 +37,7 @@ import type { RuntimeEnv } from "../../runtime.js";
 import { parseTtsDirectives } from "../../tts/tts-core.js";
 import { kokoroTTSBuffer, resolveKokoroConfig, warmUpKokoro } from "../../tts/tts-kokoro.js";
 import { resolveTtsConfig, textToSpeech, type ResolvedTtsConfig } from "../../tts/tts.js";
+import { KrokoSTT, resample48kStereoTo16kMonoFloat32 } from "./kroko-stt.js";
 import { RealtimeSTT, resample48kStereoTo24kMono } from "./realtime-stt.js";
 import { VoiceBridgeClient } from "./voice-bridge-client.js";
 
@@ -114,7 +116,7 @@ type VoiceSessionEntry = {
   playbackQueue: Promise<void>;
   processingQueue: Promise<void>;
   activeSpeakers: Set<string>;
-  realtimeSTT: RealtimeSTT | null;
+  realtimeSTT: RealtimeSTT | KrokoSTT | null;
   decryptFailureCount: number;
   lastDecryptFailureAt: number;
   decryptRecoveryInFlight: boolean;
@@ -172,6 +174,20 @@ function resolveVoiceTtsConfig(params: { cfg: OpenClawConfig; override?: TtsConf
     },
   };
   return { cfg, resolved: resolveTtsConfig(cfg) };
+}
+
+function resolveVoiceSttConfig(voice?: DiscordVoiceConfig): {
+  provider: "speaches" | "kroko";
+  kroko: { url: string; language?: string; apiKey?: string };
+} {
+  return {
+    provider: voice?.stt?.provider ?? "speaches",
+    kroko: {
+      url: voice?.stt?.kroko?.url ?? "ws://localhost:8080",
+      language: voice?.stt?.kroko?.language,
+      apiKey: voice?.stt?.kroko?.apiKey,
+    },
+  };
 }
 
 type OpusDecoder = {
@@ -573,21 +589,16 @@ export class DiscordVoiceManager {
     };
 
     // ─── Realtime STT setup ──────────────────────────────────────
-    const wsUrl = resolveSpeachesRealtimeUrl(this.params.cfg);
-    const whisperModel = resolveWhisperModel(this.params.cfg);
-    const stt = new RealtimeSTT({
-      url: wsUrl,
-      model: whisperModel,
-      language: this.params.cfg.tools?.media?.audio?.language,
+    const sttConfig = resolveVoiceSttConfig(this.params.discordConfig.voice);
+
+    // Shared callbacks — identical for both providers.
+    const sttCallbacks = {
       onTranscript: (text: string) => {
         const speakerId = entry.lastSpeakerId;
         logger.info(
           `realtime transcript (${text.length} chars): guild ${guildId} channel ${channelId} user ${speakerId ?? "unknown"}`,
         );
 
-        // Debounce: accumulate rapid-fire transcripts for 1.5s before
-        // sending to the agent. This prevents partial utterances from
-        // each triggering separate agent calls.
         entry.pendingTranscripts = entry.pendingTranscripts ?? [];
         entry.pendingTranscripts.push({ text, speakerId });
         if (entry.transcriptDebounceTimer) {
@@ -601,7 +612,6 @@ export class DiscordVoiceManager {
             return;
           }
 
-          // Merge all pending transcripts into a single prompt.
           const mergedText = pending.map((p) => p.text).join(" ");
           const lastSpeaker = pending[pending.length - 1].speakerId;
           logger.info(
@@ -613,18 +623,35 @@ export class DiscordVoiceManager {
         }, 1000);
       },
       onSpeechStart: () => {
-        // Interrupt current playback when user starts speaking
         if (entry.player.state.status === AudioPlayerStatus.Playing) {
           entry.player.stop(true);
         }
       },
-    });
+    };
+
+    let stt: RealtimeSTT | KrokoSTT;
+    if (sttConfig.provider === "kroko") {
+      stt = new KrokoSTT({
+        url: sttConfig.kroko.url,
+        language: sttConfig.kroko.language,
+        apiKey: sttConfig.kroko.apiKey,
+        ...sttCallbacks,
+      });
+    } else {
+      const wsUrl = resolveSpeachesRealtimeUrl(this.params.cfg);
+      const whisperModel = resolveWhisperModel(this.params.cfg);
+      stt = new RealtimeSTT({
+        url: wsUrl,
+        model: whisperModel,
+        language: this.params.cfg.tools?.media?.audio?.language,
+        ...sttCallbacks,
+      });
+    }
     entry.realtimeSTT = stt;
 
-    // Connect the realtime STT WebSocket
     stt.connect().catch((err) => {
       logger.warn(
-        `discord voice: realtime STT connect failed: ${formatErrorMessage(err)}, falling back to batch mode`,
+        `discord voice: STT connect failed: ${formatErrorMessage(err)}, falling back to batch mode`,
       );
     });
 
@@ -686,8 +713,11 @@ export class DiscordVoiceManager {
         try {
           const pcm48k = opusDecoder.decoder.decode(chunk);
           if (pcm48k && pcm48k.length > 0) {
-            const pcm24k = resample48kStereoTo24kMono(Buffer.from(pcm48k));
-            stt.feedAudio(pcm24k);
+            const pcm =
+              sttConfig.provider === "kroko"
+                ? resample48kStereoTo16kMonoFloat32(Buffer.from(pcm48k))
+                : resample48kStereoTo24kMono(Buffer.from(pcm48k));
+            stt.feedAudio(pcm);
           }
         } catch {
           // Decode errors on individual packets are normal (silence frames, etc.)
