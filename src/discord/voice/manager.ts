@@ -452,8 +452,30 @@ export class DiscordVoiceManager {
 
     // In secure mode, delegate to the voice sidecar
     if (this.bridgeClient) {
-      const result = await this.bridgeClient.join({ guildId, channelId });
+      // Guard: skip forwarding to sidecar if already connected to the same channel.
+      // Without this, autoJoin (re-fired on Discord gateway reconnect) would forward
+      // a join to the sidecar while the voice connection is mid-DAVE-renegotiation
+      // (signalling), causing the sidecar to force-rejoin → kill STT → loop.
+      const existingBridge = this.sessions.get(guildId);
+      if (existingBridge && existingBridge.channelId === channelId) {
+        logVoiceVerbose(
+          `join: already connected to guild ${guildId} channel ${channelId} (bridge)`,
+        );
+        return { ok: true, message: `Already connected to <#${channelId}>.`, guildId, channelId };
+      }
+      const result = await this.bridgeClient.join({
+        guildId,
+        channelId,
+        botUserId: this.botUserId,
+      });
       if (result.ok) {
+        // Pre-warm Kokoro so the first TTS call doesn't hit cold-start latency.
+        const kokoroDtype = this.params.discordConfig.voice?.tts?.kokoro?.dtype;
+        logger.info(`kokoro pre-warm: starting (dtype=${kokoroDtype ?? "default"})`);
+        warmUpKokoro(kokoroDtype ?? undefined)
+          .then(() => logger.info("kokoro pre-warm: model ready"))
+          .catch((err) => logger.warn(`kokoro pre-warm failed: ${err}`));
+
         // Track a lightweight session entry for the bridge
         const sessionChannelId = channelId;
         const route = resolveAgentRoute({
@@ -1048,7 +1070,13 @@ export class DiscordVoiceManager {
               "(e.g. 'Sure,' or 'Got it.') so the listener hears something immediately. " +
               "Before any tool call, search, or long operation, say what you are about to do in natural spoken language " +
               "(e.g. 'Sure, let me look that up.' or 'Let me check your calendar.').",
-            streamParams: { maxTokens: 150 },
+            // thinking: "off" — explicitly disable reasoning tokens so they don't
+            // consume the output budget (Gemini 3 Flash defaults to dynamic thinking
+            // which can eat 140+ tokens, leaving almost nothing for the response).
+            // maxTokens raised to 500: the system prompt enforces short responses;
+            // the hard limit was causing fragments like "Got it, I" or "Sure, no".
+            thinking: "off",
+            streamParams: { maxTokens: 500 },
           },
           this.params.runtime,
         );

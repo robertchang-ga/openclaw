@@ -366,9 +366,15 @@ export class VoiceBridgeServer {
       return { ok: false, message: "Gateway WebSocket not connected" };
     }
 
-    const { guildId, channelId } = params;
+    const { guildId, channelId, botUserId } = params;
     if (!guildId?.trim() || !channelId?.trim()) {
       return { ok: false, message: "Missing guildId or channelId" };
+    }
+    // Prefer the gateway-supplied botUserId over the REST-fetched one (REST may
+    // fail when the sidecar has no public internet access at startup).
+    if (botUserId) {
+      this.botUserId = botUserId;
+      log.info(`botUserId set from join request: ${botUserId}`);
     }
 
     const existing = this.sessions.get(guildId);
@@ -506,6 +512,7 @@ export class VoiceBridgeServer {
       }
       session.activeSpeakers.add(userId);
       session.lastSpeakerId = userId;
+      onSttSpeechStart();
 
       const stream = connection.receiver.subscribe(userId, {
         end: { behavior: EndBehaviorType.AfterSilence, duration: 500 },
@@ -525,8 +532,8 @@ export class VoiceBridgeServer {
                 : resample48kStereoTo24kMono(Buffer.from(pcm48k));
             stt.feedAudio(pcmReady);
           }
-        } catch {
-          // Decode errors on individual packets are normal
+        } catch (err) {
+          log.warn(`decode error for user ${userId}: ${String(err)}`);
         }
       });
 

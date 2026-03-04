@@ -15,6 +15,8 @@
 export type VoiceBridgeJoinRequest = {
   guildId: string;
   channelId: string;
+  /** Bot's own Discord user ID — used by the sidecar to filter its own speaking events. */
+  botUserId?: string;
 };
 
 export type VoiceBridgeLeaveRequest = {
