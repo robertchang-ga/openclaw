@@ -25,6 +25,7 @@ Entity normalization only:
 - Use the lookup table below for known entities
 - For unknown entities, use context to infer the correct name
 - If uncertain, keep the original text
+- **Name reconstruction**: when a token looks like a concatenated name (e.g., `johnnguyen`, `sarahlee`, `mikeoconnor`), split it into properly-cased words (e.g., `John Nguyen`, `Sarah Lee`, `Mike O'Connor`). Use surrounding context (e.g., other participants calling them by name, email addresses, introductions) to confirm the split. If you cannot confidently determine the split, keep the original token.
 
 ### Level: `full` (default)
 
