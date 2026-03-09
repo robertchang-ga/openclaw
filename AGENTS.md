@@ -212,8 +212,15 @@
 
 ## Host Exec Bins (`~/.openclaw/exec-approvals.json`)
 
-- Allowed host-exec binaries (auto-approved via `hostExecBins`, no approval prompt): `git`, `gh`, `supabase`, `mcporter`, `gog`.
+- Allowed host-exec binaries (auto-approved via `hostExecBins`, no approval prompt): `git`, `gh`, `supabase`, `mcporter`, `gog`, `brd-scrape`.
 - Deny lists restrict dangerous subcommands per binary (e.g. `git push`, `gh auth`, `supabase secrets`). Check `~/.openclaw/exec-approvals.json` for the current rules before running privileged subcommands.
+
+## Web Scraping (`brd-scrape`)
+
+- `brd-scrape <url> [options]` — scrape a page via a BrightData remote browser. Credentials are stored in `~/.openclaw/brightdata-endpoint` and never exposed to the agent.
+- Options: `--format text|html|markdown` (default `text`), `--selector <css>`, `--screenshot <file>`, `--wait-for <css>`, `--timeout <ms>`.
+- The wrapper lives at `~/.local/bin/brd-scrape`; source is `scripts/brd-scrape.ts`.
+- Use this instead of raw `playwright` so credential injection is handled automatically.
 
 ## NPM + 1Password (publish/verify)
 
