@@ -164,7 +164,20 @@ async function replacePlaceholders(text: string, registry: SecretRegistry): Prom
     const profileId = match[1];
     const token = await resolveOAuthToken(registry, profileId);
     if (token) {
-      text = text.replace(match[0], token);
+      // If the placeholder is the signature of a synthetic JWT (e.g. openai-codex
+      // embeds accountId in a fake JWT so the provider can read it before the HTTP
+      // call), replace the entire synthetic JWT, not just the placeholder portion.
+      const syntheticJwtPrefix = /[A-Za-z0-9+/=_-]+\.[A-Za-z0-9+/=_-]+\.$/;
+      const beforePlaceholder = text.slice(0, match.index);
+      const jwtPrefixMatch = beforePlaceholder.match(syntheticJwtPrefix);
+      if (jwtPrefixMatch) {
+        text =
+          text.slice(0, match.index - jwtPrefixMatch[0].length) +
+          token +
+          text.slice(match.index + match[0].length);
+      } else {
+        text = text.replace(match[0], token);
+      }
     } else {
       logger.warn(`OAuth token not found for profile: ${profileId}`);
     }

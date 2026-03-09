@@ -126,6 +126,9 @@ export async function prepareSanitizedMounts(opts?: {
                 type: "oauth",
                 provider: credential.provider,
                 email: credential.email,
+                // accountId is non-secret and required by openai-codex before the
+                // proxy can swap in the real bearer token.
+                accountId: credential.accountId,
                 // projectId is not a secret - preserve it for google-gemini-cli
                 projectId: credential.projectId,
                 access: `{{OAUTH:${profileId}}}`,

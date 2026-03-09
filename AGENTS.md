@@ -210,6 +210,11 @@
 - Release guardrails: do not change version numbers without operator’s explicit consent; always ask permission before running any npm publish/release step.
 - Beta release guardrail: when using a beta Git tag (for example `vYYYY.M.D-beta.N`), publish npm with a matching beta version suffix (for example `YYYY.M.D-beta.N`) rather than a plain version on `--tag beta`; otherwise the plain version name gets consumed/blocked.
 
+## Host Exec Bins (`~/.openclaw/exec-approvals.json`)
+
+- Allowed host-exec binaries (auto-approved via `hostExecBins`, no approval prompt): `git`, `gh`, `supabase`, `mcporter`, `gog`.
+- Deny lists restrict dangerous subcommands per binary (e.g. `git push`, `gh auth`, `supabase secrets`). Check `~/.openclaw/exec-approvals.json` for the current rules before running privileged subcommands.
+
 ## NPM + 1Password (publish/verify)
 
 - Use the 1password skill; all `op` commands must run inside a fresh tmux session.

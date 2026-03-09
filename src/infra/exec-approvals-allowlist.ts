@@ -504,6 +504,12 @@ export function evaluateShellAllowlist(params: {
   const allowlistMatches: ExecAllowlistEntry[] = [];
   const segments: ExecCommandSegment[] = [];
   const segmentSatisfiedBy: ExecSegmentSatisfiedBy[] = [];
+  // Track whether any chain part failed the allowlist. We must NOT return early
+  // on the first failure — all parts must be processed so that `segments` reflects
+  // the true total segment count. Early-returning with a partial segment list
+  // would cause the caller's `segments.length === 1` check (used by hostExecBins
+  // routing) to pass for multi-command chains, allowing deny-list bypasses.
+  let chainAllowlistSatisfied = true;
 
   for (const part of chainParts) {
     const analysis = analyzeShellCommand({
@@ -531,14 +537,18 @@ export function evaluateShellAllowlist(params: {
     allowlistMatches.push(...evaluation.allowlistMatches);
     segmentSatisfiedBy.push(...evaluation.segmentSatisfiedBy);
     if (!evaluation.allowlistSatisfied) {
-      return {
-        analysisOk: true,
-        allowlistSatisfied: false,
-        allowlistMatches,
-        segments,
-        segmentSatisfiedBy,
-      };
+      chainAllowlistSatisfied = false;
     }
+  }
+
+  if (!chainAllowlistSatisfied) {
+    return {
+      analysisOk: true,
+      allowlistSatisfied: false,
+      allowlistMatches,
+      segments,
+      segmentSatisfiedBy,
+    };
   }
 
   return {

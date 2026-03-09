@@ -32,12 +32,20 @@ export type VoiceBridgeClientOptions = {
   onSpeechStart?: (event: { guildId: string; channelId: string }) => void;
   /** Called when a voice session is disconnected */
   onSessionDisconnected?: (event: { guildId: string; channelId: string; reason?: string }) => void;
+  /**
+   * Called when the WebSocket reconnects after a drop (not on the initial connect).
+   * Receives the current active sessions reported by the sidecar so the manager
+   * can reconcile and drop any stale entries that the sidecar no longer knows about.
+   */
+  onReconnect?: (activeSessions: VoiceBridgeStatusEntry[]) => void;
 };
 
 export class VoiceBridgeClient {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
+  /** True after the first successful WS open; used to detect reconnects vs initial connect. */
+  private everConnected = false;
   private readonly baseUrl: string;
   private readonly wsUrl: string;
   private readonly options: VoiceBridgeClientOptions;
@@ -81,8 +89,25 @@ export class VoiceBridgeClient {
     const ws = new WebSocket(this.wsUrl);
 
     ws.on("open", () => {
-      logger.info("Connected to voice sidecar WebSocket");
+      const isReconnect = this.everConnected;
+      this.everConnected = true;
       this.ws = ws;
+      if (isReconnect) {
+        logger.info("Reconnected to voice sidecar WebSocket — reconciling sessions");
+        // Fetch the sidecar's actual active sessions so the manager can drop any
+        // stale entries whose session_disconnected events were lost during the outage.
+        this.status()
+          .then((activeSessions) => {
+            this.options.onReconnect?.(activeSessions);
+          })
+          .catch((err) => {
+            logger.warn(`Failed to fetch sidecar status after reconnect: ${String(err)}`);
+            // Emit with empty list so the manager can clear all stale sessions.
+            this.options.onReconnect?.([]);
+          });
+      } else {
+        logger.info("Connected to voice sidecar WebSocket");
+      }
     });
 
     ws.on("message", (data) => {

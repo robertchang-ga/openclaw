@@ -576,6 +576,24 @@ describe("exec approvals shell allowlist (chained commands)", () => {
     }
   });
 
+  it("returns all segments for chained commands even when allowlist is not satisfied", () => {
+    // Regression: previously returned early with only the first part's segments when
+    // allowlist was not satisfied, making chained commands appear single-segment.
+    // This caused the hostExecBins routing check (segments.length === 1) to pass
+    // for multi-command chains, allowing deny-list bypasses.
+    const result = evaluateShellAllowlist({
+      command: "git add . && git commit -m test",
+      allowlist: [],
+      safeBins: new Set(),
+    });
+    expect(result.analysisOk).toBe(true);
+    expect(result.allowlistSatisfied).toBe(false);
+    // Must return segments for BOTH chain parts, not just the first.
+    expect(result.segments).toHaveLength(2);
+    expect(result.segments[0]?.resolution?.executableName).toBe("git");
+    expect(result.segments[1]?.resolution?.executableName).toBe("git");
+  });
+
   it("respects quoted chain separators", () => {
     const allowlist: ExecAllowlistEntry[] = [{ pattern: "/usr/bin/echo" }];
     const commands = ['/usr/bin/echo "foo && bar"', '/usr/bin/echo "foo\\" && bar"'];

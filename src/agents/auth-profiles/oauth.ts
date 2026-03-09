@@ -288,14 +288,29 @@ export async function resolveApiKeyForProfile(
     let placeholder: string;
     if (cred.type === "oauth") {
       // For google-gemini-cli, return JSON format with placeholders
-      const needsProjectId =
-        cred.provider === "google-gemini-cli" || cred.provider === "google-antigravity";
-      placeholder = needsProjectId
-        ? JSON.stringify({
-            token: `{{OAUTH:${profileId}}}`,
-            projectId: cred.projectId || "",
-          })
-        : `{{OAUTH:${profileId}}}`;
+      const needsProjectId = cred.provider === "google-gemini-cli";
+      if (needsProjectId) {
+        placeholder = JSON.stringify({
+          token: `{{OAUTH:${profileId}}}`,
+          projectId: cred.projectId || "",
+        });
+      } else if (cred.provider === "openai-codex") {
+        // openai-codex provider extracts accountId from the JWT *before* making the
+        // HTTP request (chatgpt-account-id header). accountId is non-sensitive, so
+        // embed it in a synthetic JWT whose signature is the proxy placeholder.
+        // The proxy will replace the entire Bearer token at HTTP time.
+        const accountId =
+          typeof cred.accountId === "string" && cred.accountId ? cred.accountId : "";
+        const header = btoa(JSON.stringify({ alg: "none" }));
+        const payload = btoa(
+          JSON.stringify({
+            "https://api.openai.com/auth": { chatgpt_account_id: accountId },
+          }),
+        );
+        placeholder = `${header}.${payload}.{{OAUTH:${profileId}}}`;
+      } else {
+        placeholder = `{{OAUTH:${profileId}}}`;
+      }
     } else if (cred.type === "api_key") {
       placeholder = `{{APIKEY:${profileId}}}`;
     } else if (cred.type === "token") {

@@ -295,6 +295,19 @@ export class DiscordVoiceManager {
           );
           this.sessions.delete(event.guildId);
         },
+        onReconnect: (activeSessions) => {
+          // The WS to the sidecar dropped and came back. Any session_disconnected
+          // events fired during the outage were lost, so reconcile now.
+          const activeGuildIds = new Set(activeSessions.map((s) => s.guildId));
+          for (const [guildId] of this.sessions) {
+            if (!activeGuildIds.has(guildId)) {
+              logger.info(
+                `Voice session stale after sidecar reconnect: guild ${guildId} — clearing`,
+              );
+              this.sessions.delete(guildId);
+            }
+          }
+        },
       });
       this.bridgeClient.connect();
 
