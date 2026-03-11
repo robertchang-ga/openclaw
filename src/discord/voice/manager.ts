@@ -40,6 +40,7 @@ import { resolveTtsConfig, textToSpeech, type ResolvedTtsConfig } from "../../tt
 import { KrokoSTT, resample48kStereoTo16kMonoFloat32 } from "./kroko-stt.js";
 import { RealtimeSTT, resample48kStereoTo24kMono } from "./realtime-stt.js";
 import { VoiceBridgeClient } from "./voice-bridge-client.js";
+import type { VoiceBridgeStatusEntry } from "./voice-bridge-types.js";
 
 const require = createRequire(import.meta.url);
 
@@ -469,12 +470,29 @@ export class DiscordVoiceManager {
       // Without this, autoJoin (re-fired on Discord gateway reconnect) would forward
       // a join to the sidecar while the voice connection is mid-DAVE-renegotiation
       // (signalling), causing the sidecar to force-rejoin → kill STT → loop.
+      //
+      // However, the local sessions map can become stale if a session_disconnected
+      // event was lost during a sidecar WS outage. Verify with the sidecar before
+      // short-circuiting so a dropped-but-uncleared session doesn't block rejoins.
       const existingBridge = this.sessions.get(guildId);
       if (existingBridge && existingBridge.channelId === channelId) {
-        logVoiceVerbose(
-          `join: already connected to guild ${guildId} channel ${channelId} (bridge)`,
+        const activeSessions = await this.bridgeClient
+          .status()
+          .catch((): VoiceBridgeStatusEntry[] => []);
+        const isActive = activeSessions.some(
+          (s) => s.guildId === guildId && s.channelId === channelId && s.connected,
         );
-        return { ok: true, message: `Already connected to <#${channelId}>.`, guildId, channelId };
+        if (isActive) {
+          logVoiceVerbose(
+            `join: already connected to guild ${guildId} channel ${channelId} (bridge)`,
+          );
+          return { ok: true, message: `Already connected to <#${channelId}>.`, guildId, channelId };
+        }
+        // Stale local entry — clear it and fall through to rejoin
+        logVoiceVerbose(
+          `join: stale bridge session for guild ${guildId} channel ${channelId}; rejoining`,
+        );
+        this.sessions.delete(guildId);
       }
       const result = await this.bridgeClient.join({
         guildId,

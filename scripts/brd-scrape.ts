@@ -432,15 +432,13 @@ async function runActions(page: any, context: any, actions: Action[]): Promise<v
 async function main(): Promise<void> {
   const endpoint = await loadEndpoint();
 
-  // playwright is a runtime dep resolved via npx/node_modules; not in project tsconfig.
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-expect-error
-  const { chromium } = await import("playwright").catch(() => {
-    console.error("playwright package not found. Install with: npm install -g playwright");
+  // playwright-core is a runtime dep resolved via node_modules.
+  const { chromium } = await import("playwright-core").catch(() => {
+    console.error("playwright-core package not found. Install with: npm install playwright-core");
     process.exit(1);
   });
 
-  const browser = await chromium.connectOverCDP(endpoint);
+  const browser = await chromium.connectOverCDP(endpoint, { timeout });
   try {
     const contextOpts = {
       viewport: { width: viewportW, height: viewportH },
